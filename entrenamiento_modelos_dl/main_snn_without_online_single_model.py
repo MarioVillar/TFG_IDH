@@ -33,7 +33,7 @@ from tensorflow.keras.models import load_model
 
 
 from global_variables import *
-from general_functions import *
+from distance_functions import *
 from threshold_detection_functions import *
 from utilities import *
 from test_functions import *
