@@ -54,7 +54,7 @@ from distance_functions import *
 from threshold_detection_functions import *
 from utilities import *
 from test_functions import *
-from neural_network_model import ModelCustomVal
+from snn_sigmoid_models import ModelCustomVal
 from image_preprocessing_functions import *
 
 

@@ -590,7 +590,7 @@ exp_results = expResults.get_results_from_disk(results_online_file_path,
 for alpha_margin, l2_penalizer, batch_all, learn_rate in parameter_space:
 
     # Model parameters
-    parameters_used = "Triplet Loss sin online generation." + \
+    parameters_used = "Triplet Loss con online generation." + \
                       "\nAlpha = " + str(alpha_margin) + \
                       "\nL2 penalizer = " + str(l2_penalizer) + \
                       "\nBatch all = " + str(batch_all) + \
