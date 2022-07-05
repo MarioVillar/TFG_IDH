@@ -160,15 +160,15 @@ neg_ind_splits = np.array_split(neg_individuals, n_folds)
 
 """
 ############################
-SPLIT POSITIVE INDIVIDUALS INTO TEST AND VALIDATION
+SPLIT POSITIVE INDIVIDUALS INTO TRAINING AND VALIDATION
 
-When evaluating in fold i, the test individuals of that fold serve as test
-and the validation individuals as validation. The rest of individuals (from
-test and validation of other folds) are used as training.
+When evaluating in fold i, all individuals of that fold serve as test, 
+while training and validation individuals of the other fols are used
+as training set and validation set.
 """
 
 pos_val_ind_splits   = []
-pos_test_ind_splits = []
+pos_train_ind_splits = []
 
 for i in range(0, n_folds):
     # 10% of positive train individuals are chosen randomly for validation
@@ -179,14 +179,14 @@ for i in range(0, n_folds):
     pos_train_ind_fold_i = pos_ind_splits[i][~np.in1d(pos_ind_splits[i], pos_val_ind_fold_i)]
     
     pos_val_ind_splits.append(pos_val_ind_fold_i)
-    pos_test_ind_splits.append(pos_train_ind_fold_i)
+    pos_train_ind_splits.append(pos_train_ind_fold_i)
 
 
 
 """
 The splits of individuals for each fold are saved in a dictionary
 (`fold_individuals`) where the keys are the fold indexes (0..n_folds)
-and the values are tuples of splits of positive test, positive validation
+and the values are tuples of splits of positive training, positive validation
 and negative individuals for each fold.
 """
 
@@ -194,7 +194,7 @@ and negative individuals for each fold.
 fold_individuals = {}
 
 for i in range(0, n_folds):
-    fold_individuals[i] = (pos_test_ind_splits[i], pos_val_ind_splits[i], neg_ind_splits[i])
+    fold_individuals[i] = (pos_train_ind_splits[i], pos_val_ind_splits[i], neg_ind_splits[i])
 
 """
 As each fold will be sometimes used for training and sometimes used for 
@@ -259,7 +259,7 @@ for i in range(0, n_folds):
     # Get the face image path from the face_im_dict of the individual skull_ind:
     #   For all the skull_ind that are positive train individuals
     #       For each skull image of skull_ind
-    anchor_path_list_1 = [ face_im_dict[df_info.loc[df_info['Individuo'] == skull_ind].iloc[0,1]] # Image path gotten from dictionary with the image name (obtained from info df)
+    anchor_path_list = [ face_im_dict[df_info.loc[df_info['Individuo'] == skull_ind].iloc[0,1]] # Image path gotten from dictionary with the image name (obtained from info df)
                               for skull_ind in fold_individuals[i][0]                             # For each positive train individual 
                                   for skull_im in os.listdir(skull_im_path + "/" + skull_ind)]    # For each skull image of that individual
     ##############
@@ -267,33 +267,9 @@ for i in range(0, n_folds):
     # Get the path of a skull image from skull_ind:
     #   For all the skull_ind that are positive train individuals
     #       For each skull image of skull_ind
-    pos_path_list_1 = [ skull_im_path + "/" + skull_ind + "/" + skull_im                   # Skull image path
+    pos_path_list = [ skull_im_path + "/" + skull_ind + "/" + skull_im                   # Skull image path
                           for skull_ind in fold_individuals[i][0]                          # For each positive train individual 
                               for skull_im in os.listdir(skull_im_path + "/" + skull_ind)] # For each skull image of that individual
-     
-    
-    ##############
-    # Path of Anchor images using validation individuals
-    # Get the face image path from the face_im_dict of the individual skull_ind:
-    #   For all the skull_ind that are positive train individuals
-    #       For each skull image of skull_ind
-    anchor_path_list_2 = [ face_im_dict[df_info.loc[df_info['Individuo'] == skull_ind].iloc[0,1]] # Image path gotten from dictionary with the image name (obtained from info df)
-                              for skull_ind in fold_individuals[i][1]                             # For each positive train individual 
-                                  for skull_im in os.listdir(skull_im_path + "/" + skull_ind)]    # For each skull image of that individual
-    ##############
-    # Path of Positive images using validation individuals
-    # Get the path of a skull image from skull_ind:
-    #   For all the skull_ind that are positive train individuals
-    #       For each skull image of skull_ind
-    pos_path_list_2 = [ skull_im_path + "/" + skull_ind + "/" + skull_im                   # Skull image path
-                          for skull_ind in fold_individuals[i][1]                          # For each positive train individual 
-                              for skull_im in os.listdir(skull_im_path + "/" + skull_ind)] # For each skull image of that individual
-    
-    
-    ##############
-    # Get total anchor and positive images
-    anchor_path_list = anchor_path_list_1 + anchor_path_list_2
-    pos_path_list = pos_path_list_1 + pos_path_list_2
     
     ##############
     # Path of Negative images
@@ -450,8 +426,8 @@ for i in range(0, n_folds):
     pos_skull_path_list  = [] # Path of each skull test image
     pos_skull_label_list = [] # Name of each face test image
 
-    # For each one of the positive test individuals of that fold 
-    for skull_ind in fold_individuals[i][0]:
+    # For each one of the positive individuals of that fold 
+    for skull_ind in fold_individuals[i][0] + fold_individuals[i][1]:
         image_index = random.randint(0,num_pos_images-1) # Random image
 
         # Append skull image path to list
@@ -577,25 +553,25 @@ random.shuffle(all_utk_im_paths)
 face_db_size = 100
 fold_face_datasets = {}
 
-
 # For each Fold
 for i in range(0, n_folds):
     pos_face_path_list  = [] # Path of each skull test image
     pos_face_label_list = [] # Name of each face test image
     
-    # Append faces from test individuals
+    # Append faces from positive individuals (train split) of this fold
     for skull_ind in fold_individuals[i][0]: 
         pos_face_path_list.append(face_im_dict[df_info.loc[df_info['Individuo'] == skull_ind].iloc[0,1]])
     
         # Append corresponding face image name to list
         pos_face_label_list.append(df_info.loc[df_info['Individuo'] == skull_ind].iloc[0,1])
         
-    # Append faces from validation individuals
-    for skull_ind in fold_individuals[i][1]: 
-        pos_face_path_list.append(face_im_dict[df_info.loc[df_info['Individuo'] == skull_ind].iloc[0,1]])
-    
-        # Append corresponding face image name to list
-        pos_face_label_list.append(df_info.loc[df_info['Individuo'] == skull_ind].iloc[0,1])
+    # Append faces from validation individuals of all folds
+    for j in range(0, n_folds):
+        for skull_ind in fold_individuals[j][1]: 
+            pos_face_path_list.append(face_im_dict[df_info.loc[df_info['Individuo'] == skull_ind].iloc[0,1]])
+        
+            # Append corresponding face image name to list
+            pos_face_label_list.append(df_info.loc[df_info['Individuo'] == skull_ind].iloc[0,1])
     
     # Take UTK faces to complete face dataset
     im_utk_paths = all_utk_im_paths[-(face_db_size-len(pos_face_path_list)):]
