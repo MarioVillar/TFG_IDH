@@ -30,12 +30,12 @@ from tensorflow.keras.models import load_model
 
 
 
-from global_variables import *
+from macros import *
 from distance_functions import *
 from threshold_detection_functions import *
 from utilities import *
 from test_functions import *
-from snn_sigmoid_model import ModelCustomVal
+from snn_sigmoid import SNNSIGMOID
 from image_preprocessing_functions import *
 
 
@@ -570,8 +570,8 @@ output = layers.Activation(activations.sigmoid)(x)
 
 # Create whole model
 network = Model([input1, input2], output)
-# model = ModelCustomVal(_inputs=[input1, input2], _outputs=output, face_dataset=face_dataset)
-model = ModelCustomVal(network, face_dataset)
+# model = SNNSIGMOID(_inputs=[input1, input2], _outputs=output, face_dataset=face_dataset)
+model = SNNSIGMOID(network, face_dataset)
 
 # Save weights
 model_initial_weights = model.get_weights()
@@ -583,7 +583,7 @@ TRAINING PARAMETERS
 """
 train_epochs       = 1000             # Training epochs (not relevant, using Early Stopping)
 
-val_metric = "val_topk_acc" # "val_mean_pct_ranking"
+val_metric = "val_topk_acc" # ""
 
 # Early stopping to halt training when validation does not improve
 callbacks = [
@@ -614,25 +614,25 @@ retrain_layers_comb = [ ["Bottleneck"],
                         ["Bottleneck", "Block8", "Mixed_7a", "Block17"] ]
                         
 parameter_space = [[learn_rate, retrainables_layers]
-                   for learn_rate in learn_rates
-                       for retrainables_layers in retrain_layers_comb
+                       for learn_rate in learn_rates
+                           for retrainables_layers in retrain_layers_comb
                   ]
 
 
 ##############
 # Obtain object to save the results from file
-exp_results = expResultsTrad.get_results_from_disk(results_traditional_nn,
+exp_results = expResultsTrad.get_results_from_disk(results_snnsigmoid_hold_out_file_path,
                                                    size_pos_test,
                                                    size_neg_test,
                                                    face_db_size)
     
 
-print("\n\nTraditional NN top-k validation\n\n")
+print("\n\nSNNSIGMOID LESS REG\n\n")
 
 for learn_rate, retrainables_layers in parameter_space:
 
     # Model parameters
-    parameters_used = "Tradictional Neural Network." + \
+    parameters_used = "SNNSIGMOID LESS REG." + \
                       "\nTrain epochs = " + str(train_epochs) + \
                       "\nLearn rate = " + str(learn_rate) + \
                       "\nBatch size = " +  str(train_batch_size) + \
@@ -667,7 +667,7 @@ for learn_rate, retrainables_layers in parameter_space:
                   loss=losses.MeanSquaredError())
     # metrics.RootMeanSquaredError()
     
-    print("\nModelo", retrainables_layers, learn_rate, flush=True)
+    print("\nSNNSIGMOID LESS REG", retrainables_layers, learn_rate, flush=True)
     print("Comenzando entrenamiento...", flush=True)
     history = model.fit(train_dataset, epochs=train_epochs,
                                 validation_data=pos_val_dataset,
@@ -738,4 +738,4 @@ for learn_rate, retrainables_layers in parameter_space:
     
     ##############
     # Save results object to disk
-    expResultsTrad.save_results_to_disk(exp_results, results_traditional_nn)
+    expResultsTrad.save_results_to_disk(exp_results, results_snnsigmoid_hold_out_file_path)

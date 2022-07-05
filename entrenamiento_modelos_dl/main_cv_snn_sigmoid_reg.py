@@ -49,12 +49,12 @@ from tensorflow.keras.models import load_model
 
 
 
-from global_variables import *
+from macros import *
 from distance_functions import *
 from threshold_detection_functions import *
 from utilities import *
 from test_functions import *
-from snn_sigmoid_models import ModelCustomVal
+from snn_sigmoid import SNNSIGMOID
 from image_preprocessing_functions import *
 
 
@@ -781,8 +781,8 @@ output_con_reg = layers.Activation(activations.sigmoid)(x_con_reg)
 
 # Create whole model
 network_con_reg = Model([input1_con_reg, input2_con_reg], output_con_reg)
-# model = ModelCustomVal(_inputs=[input1, input2], _outputs=output, face_dataset=face_dataset)
-# model_con_reg = ModelCustomVal(network_con_reg, face_dataset)
+# model = SNNSIGMOID(_inputs=[input1, input2], _outputs=output, face_dataset=face_dataset)
+# model_con_reg = SNNSIGMOID(network_con_reg, face_dataset)
 
 # Save weights
 # model_initial_weights_con_reg = model_con_reg.get_weights()
@@ -907,7 +907,7 @@ for learn_rate, retrainables_layers in parameter_space_con_reg:
         ##############
         # COMPILE MODEL 
         
-        model_con_reg = ModelCustomVal(network_con_reg, face_dataset)
+        model_con_reg = SNNSIGMOID(network_con_reg, face_dataset)
         
         # Reset weights to initial ones
         embedding_con_reg.set_weights(emb_initial_weights_con_reg)

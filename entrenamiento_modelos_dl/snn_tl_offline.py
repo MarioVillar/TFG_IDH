@@ -31,7 +31,7 @@ from tensorflow.keras.models import load_model
 
 
 
-from global_variables import *
+from macros import *
 from distance_functions import *
 from threshold_detection_functions import *
 from utilities import *
@@ -40,7 +40,7 @@ from test_functions import *
 
 # Create Keras Model with the SNN to train it on data
 
-class SiameseModel(Model):
+class SNNTLOffline(Model):
     """The Siamese Network model with a custom training and testing loops.
 
     Computes the triplet loss using the three embeddings produced by the
@@ -49,7 +49,7 @@ class SiameseModel(Model):
     The triplet loss is defined as:
     
        L(A, P, N) = max(‖emb(A) - emb(P)‖² - ‖emb(A) - emb(N)‖² + alpha +
-                            lambda_1 * sum_i_d(emb_i(A) + emb_i(P) + emb_i(N)) +             # L1 regularization
+                            # (not used finally) lambda_1 * sum_i_d(emb_i(A) + emb_i(P) + emb_i(N)) +             # L1 regularization
                             lambda_2 * (norm_2(A) + norm_2(P) + norm_2(N)),                  # L2 regularization
                         0)
     
@@ -62,13 +62,13 @@ class SiameseModel(Model):
             and anchor-negative pairs.
         sum_i_d(emb_i(x)) is the sum of all the coefficients of the embedding
             vector of x
-        lambda_1 is the L1 regularization strength parameter,
+        (not used finally) lambda_1 is the L1 regularization strength parameter,
         lambda_2 is the L2 regularization strength parameter.
     """
 
     def __init__(self, siamese_network, embedding_gen, face_dataset,
-                 alpha, lambda_1=0, lambda_2=0, alpha_pen=0, epsilon=0, triplet_selection=False):
-        super(SiameseModel, self).__init__()
+                 alpha, lambda_2=0, alpha_pen=0, epsilon=0, triplet_selection=False): # lambda_1=0, 
+        super(SNNTLOffline, self).__init__()
         self.siamese_network = siamese_network  # Underneath network model
         self.embedding_gen = embedding_gen      # Underneath embedding generator model
 
@@ -77,7 +77,7 @@ class SiameseModel(Model):
         self.alpha = alpha                      # Distance margin
         self.alpha_pen = float(alpha_pen)       # Conditional penalty
         self.epsilon = float(epsilon)           # epsilon for Conditional Triplet Loss (between 0 and 1)
-        self.lambda_1 = lambda_1                # L1 regularization strength parameter
+        # self.lambda_1 = lambda_1                # L1 regularization strength parameter
         self.lambda_2 = lambda_2                # L2 regularization strength parameter
 
         self.triplet_selection = triplet_selection
@@ -215,7 +215,7 @@ class SiameseModel(Model):
         # Get Triplet Loss from AP distance, AN distance, alpha, L1 penalty and
         # L2 penalty
         loss = tf.maximum(  ap_distance - an_distance + self.alpha +
-                            self.lambda_1 * l1_penalization +
+                            # self.lambda_1 * l1_penalization +
                             self.lambda_2 * l2_penalization,
                           0.0)
         

@@ -30,7 +30,7 @@ from tensorflow.keras.models import load_model
 
 
 
-from global_variables import *
+from macros import *
 from distance_functions import *
 from threshold_detection_functions import *
 from utilities import *
@@ -38,7 +38,7 @@ from test_functions import *
 
 
 
-class SiameseModel(Model):
+class SNNTLONLINE(Model):
     """The Siamese Network model with a custom training and testing loops.
 
     Computes the triplet loss using the three embeddings produced by the
@@ -47,7 +47,6 @@ class SiameseModel(Model):
     The triplet loss is defined as:
     
        L(A, P, N) = max(‖emb(A) - emb(P)‖² - ‖emb(A) - emb(N)‖² + alpha +
-                            lambda_1 * sum_i_d(emb_i(A) + emb_i(P) + emb_i(N)) +             # L1 regularization
                             lambda_2 * sum_i_d(emb_i(A)^2 + emb_i(P)^2 + emb_i(N)^2),        # L2 regularization
                         0)
     
@@ -60,13 +59,12 @@ class SiameseModel(Model):
             and anchor-negative pairs.
         sum_i_d(emb_i(x)) is the sum of all the coefficients of the embedding
             vector of x
-        lambda_1 is the L1 regularization strength parameter,
         lambda_2 is the L2 regularization strength parameter.
     """
 
     def __init__(self, siamese_network, embedding_gen, face_dataset, 
                  alpha, lambda_2=0, batch_all=False):
-        super(SiameseModel, self).__init__()
+        super(SNNTLONLINE, self).__init__()
         self.siamese_network = siamese_network  # Underneath network model
         self.embedding_gen = embedding_gen      # Underneath embedding generator model
 

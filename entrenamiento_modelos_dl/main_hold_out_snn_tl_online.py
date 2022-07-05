@@ -32,12 +32,12 @@ from tensorflow.keras.models import load_model
 
 
 
-from global_variables import *
+from macros import *
 from distance_functions import *
 from threshold_detection_functions import *
 from utilities import *
 from test_functions import *
-from siamese_keras_model import *
+from snn_tl_online import SNNTLONLINE
 from image_preprocessing_functions import *
 
 
@@ -203,6 +203,11 @@ anchor_path_list = [ face_im_dict[df_info.loc[df_info['Individuo'] == skull_ind]
                         for skull_ind in pos_train_individuals                              # For each positive train individual 
                             for skull_im in os.listdir(skull_im_path + "/" + skull_ind)]    # For each skull image of that individual
 
+anchor_label_list = [skull_ind
+                        for skull_ind in pos_train_individuals                              # For each positive train individual 
+                            for skull_im in os.listdir(skull_im_path + "/" + skull_ind)]    # For each skull image of that individual]
+
+
 # Get all skull image paths of positive train individuals
 
 # Get the path of a skull image from skull_ind:
@@ -211,6 +216,11 @@ anchor_path_list = [ face_im_dict[df_info.loc[df_info['Individuo'] == skull_ind]
 pos_path_list = [ skull_im_path + "/" + skull_ind + "/" + skull_im                   # Skull image path
                     for skull_ind in pos_train_individuals                           # For each positive train individual
                         for skull_im in os.listdir(skull_im_path + "/" + skull_ind)] # For each skull image of that individual
+
+pos_label_list = [ skull_ind
+                    for skull_ind in pos_train_individuals                           # For each positive train individual
+                        for skull_im in os.listdir(skull_im_path + "/" + skull_ind)] # For each skull image of that individual]
+
 
 # Get 124 skull image paths of negative individuals in order to balance the dataset
 
@@ -223,6 +233,10 @@ neg_path_list = [ skull_im_path + "/" + skull_ind + "/" + skull_im              
                         for skull_im in os.listdir(skull_im_path + "/" + skull_ind) # For each skull image of that individual
                             if int(skull_im.split("_")[3].split(".")[0]) < num_neg_images ]
 
+neg_label_list = [ skull_ind
+                    for skull_ind in neg_train_individuals                          # For each individual in the skull dataset
+                        for skull_im in os.listdir(skull_im_path + "/" + skull_ind) # For each skull image of that individual
+                            if int(skull_im.split("_")[3].split(".")[0]) < num_neg_images ]
 
 
 """
@@ -232,37 +246,53 @@ element `i` of `positive_path_list`, so both of them should be
 shuffled in the same exact order.
 """
 
-# Zip together anchor and positive images
-anchor_positive_zip = list( zip(anchor_path_list, pos_path_list) )
+# Zip together anchor and positive images (with labels)
+anchor_positive_zip = list( zip(anchor_path_list, anchor_label_list, pos_path_list, pos_label_list) )
 
 # Randomly shuffle the zip altogether
 random.shuffle(anchor_positive_zip)
 
 # Unzip
-anchor_path_list, pos_path_list = zip(*anchor_positive_zip)
+anchor_path_list, anchor_label_list, pos_path_list, pos_label_list = zip(*anchor_positive_zip)
 
 # Convert to list as the zip output comes as tuples
-anchor_path_list, pos_path_list = list(anchor_path_list), list(pos_path_list)
+anchor_path_list, anchor_label_list = list(anchor_path_list), list(anchor_label_list)
+pos_path_list,    pos_label_list    = list(pos_path_list),    list(pos_label_list)
 
-# Randomly shuffle negative images
-random.shuffle(neg_path_list)
+
+# Zip together negative images and their labels
+negative_zip = list( zip(neg_path_list, neg_label_list) )
+
+# Randomly shuffle the zip altogether
+random.shuffle(negative_zip)
+
+# Unzip
+neg_path_list, neg_label_list = zip(*negative_zip)
+
+# Convert to list as the zip output comes as tuples
+neg_path_list, neg_label_list = list(neg_path_list), list(neg_label_list)
+
+
 
 
 anchor_dataset   = tf.data.Dataset.from_tensor_slices(anchor_path_list) # Anchors path dataset
 positive_dataset = tf.data.Dataset.from_tensor_slices(pos_path_list)    # Positives path dataset
 negative_dataset = tf.data.Dataset.from_tensor_slices(neg_path_list)    # Negative path dataset
 
+a_labels_dataset = tf.data.Dataset.from_tensor_slices(anchor_label_list) # Anchors labels dataset
+p_labels_dataset = tf.data.Dataset.from_tensor_slices(pos_label_list)    # Positives labels dataset
+n_labels_dataset = tf.data.Dataset.from_tensor_slices(neg_label_list)    # Negative labels dataset
 
-triplets_dataset = tf.data.Dataset.zip((anchor_dataset, positive_dataset, negative_dataset)) # Triplets path dataset
+
+triplets_dataset = tf.data.Dataset.zip(((anchor_dataset, positive_dataset, negative_dataset),
+                                        (a_labels_dataset, p_labels_dataset, n_labels_dataset))) # Triplets path dataset
 triplets_dataset = triplets_dataset.shuffle(buffer_size=1024, seed=SEED)
 
 
-train_dataset = triplets_dataset.map(get_triplet)
+train_dataset = triplets_dataset.map(get_triplet_with_label)
 n_triplets = int(train_dataset.__len__().numpy())
 
-
-batch_size  = 32
-train_dataset = train_dataset.batch(batch_size)
+train_dataset = train_dataset.batch(train_batch_size_online)
 train_dataset = train_dataset.prefetch(8) # Setting prefetch buffer size to 8
 
 
@@ -412,6 +442,8 @@ Face dataset is composed of pairs of face images and their names.
 face_im_paths  = list(face_im_dict.values())
 face_im_labels = list(face_im_dict.keys())
 
+face_db_size = len(face_im_dict)
+
 face_path_dataset   = tf.data.Dataset.from_tensor_slices(face_im_paths)   # Face images path dataset
 face_label_dataset  = tf.data.Dataset.from_tensor_slices(face_im_labels)  # Face images names dataset
 
@@ -435,12 +467,7 @@ RESIZE IMAGES TO FIT FACENET INPUT
 Images in data set are `224x224` shaped, and FaceNet accepts `160x160` shaped images.
 """
 
-train_dataset = train_dataset.map(
-    lambda anchor, positive, negative:
-        (resize_im(anchor, faceNet_shape),
-         resize_im(positive, faceNet_shape),
-         resize_im(negative, faceNet_shape))
-)
+train_dataset = train_dataset.map(resize_im_train_online)
 
 
 pos_val_dataset = pos_val_dataset.map(
@@ -478,10 +505,7 @@ training dataset.
 https://arxiv.org/abs/1904.11685
 """
     
-train_dataset = train_dataset.map(
-    lambda anchor, positive, negative:
-        (data_augmentation_faces(anchor), positive, negative)
-)   
+train_dataset = train_dataset.map(data_aug_faces_online)
 
 
     
@@ -535,174 +559,182 @@ snn_initial_weights = siamese_network.get_weights()
 ###############################################################################
 TRAINING PARAMETERS
 """
-alpha_margin  = 10     # Distance margin in Triplet Loss
-l1_penalizer  = 0      # L1 penalization strength parameter in Triplet Loss
-l2_penalizer  = 0.1      # L2 penalization strength parameter in Triplet Loss
-alpha_penalty = 0    # Distance margin penalty in Conditional Triplet Loss
-epsilon       = 0    # epsilon for Conditional Triplet Loss
-triplet_selection = False # If True, Select hard and semi hard triplets
-
-train_epochs = 10       # Training epochs
-learn_rate   = 1e-4     # Learning rate of the Optimizer in training
-
-
-# Model parameters
-parameters_used = "Triplet Loss sin online generation." + \
-                  "\nAlpha = " + str(alpha_margin) + \
-                  "\nL1 penalizer = " + str(l1_penalizer) + \
-                  "\nL2 penalizer = " + str(l2_penalizer) + \
-                  "\nAlpha penality = " + str(alpha_penalty) + "(Conditional Triplet Loss)" + \
-                  "\nEpsilon = " + str(epsilon) + "(Conditional Triplet Loss)" + \
-                  "\nTrain epochs = " + str(train_epochs) + \
-                  "\nLearn rate = " + str(learn_rate) + \
-                  "\nSelect hard and semi-hard = " + str(triplet_selection)
+train_epochs       = 1000             # Training epochs (not relevant, using Early Stopping)
 
 
 
-"""
-###############################################################################
-CREATE MODEL AND TRAIN IT
-"""
-
-siamese_model = SiameseModel(siamese_network,             # Underneath network model
-                             embedding,                   # Underneath embedding generator model
-                             face_dataset,                # Face database for validation
-                             alpha_margin,                # Triplet Loss Margin
-                             l1_penalizer, l2_penalizer,  # L1 and L2 penalization stregth
-                             alpha_penalty, epsilon,      # Conditinal Triplet Loss parameters
-                             triplet_selection            # If True, Select hard and semi hard triplets
-                             ) 
-
-# siamese_model.compile(optimizer=optimizers.Adam(learn_rate))
-siamese_model.compile(optimizer=optimizers.Adagrad(learn_rate))
-# siamese_model.compile(optimizer=optimizers.SGD(learn_rate))
+# Create hyperparameter space
+alpha_margins      = [0.2, 1, 5, 10, 20] # Distance margin in Triplet Loss
+l2_penalizers      = [0.01, 0.1, 0.2, 0.4] # L2 penalization strength parameter in Triplet Loss
+batch_all_gen      = [True, False]
+learn_rates        = [1e-4, 1e-5, 1e-6] # Learning rate of the Optimizer in training
 
 
-# Early stopping to halt training when validation does not improve
-callbacks = [
-    tf.keras.callbacks.EarlyStopping(
-        # Stop training when `val_loss` is no longer improving
-        monitor="val_mean_pct_ranking",
-        # "no longer improving" being defined as "no better than 0.001, which is 0.1%"
-        min_delta=0.001,
-        # "no longer improving" being further defined as "for at least 3 epochs"
-        patience=3,
-        mode='min',
-        verbose=1,
-    )
-]
+parameter_space = [[alpha, l2_pen, batch_all, l_r]
+                       for alpha in alpha_margins
+                           for l2_pen in l2_penalizers
+                               for batch_all in batch_all_gen
+                                   for l_r in learn_rates
+                  ]
 
 
-# Reset weights to initial ones
-embedding.set_weights(emb_initial_weights)
-siamese_network.set_weights(snn_initial_weights)
-
-print("Comenzando entrenameinto...")
-history = siamese_model.fit(train_dataset, epochs=train_epochs,
-                            validation_data=pos_val_dataset, callbacks=callbacks)
-
-
-# Get hisory of validation mean ranking percentage metric
-val_ranking_hist = np.array(history.history['val_mean_pct_ranking'])
-
-
-
-
-"""
-###############################################################################
-CHECK AP AND AN DISTANCES AND GET THRESHOLDS
-"""
-##############
-# Get A-P and A-N distances in training triplets
-ap_distances, an_distances = get_ap_an_distances(embedding, train_dataset)
-
-##############
-# Obtain decision thresholds
-beta_array = get_decision_thresholds(ap_distances, an_distances)
-
-# Save plot of distances and thresholds
-now = datetime.datetime.now()
-time_stamp = str(now.hour+2) + "%" + str(now.minute).zfill(2) + "_" + str(now.day) + "%" + str(now.month) + "%" + str(now.year)
-
-plot_dist_thresholds_hist(ap_distances, an_distances,
-                          beta_array[0], beta_array[1], beta_array[2],
-                          n_bars=50, path_savefig=path_fig_hist_thresholds+time_stamp,
-                          title=parameters_used)
-
-
-
-"""
-###############################################################################
-EVALUATE MODEL
-"""
-
-##############
-# Obtain face embeddings
-face_emb_dict = obtain_face_DB_emb_dict(embedding, face_dataset)
-
-face_db_size = len(face_emb_dict)
-
-
-##############
-# Predicions and CMC values in POSITIVE TEST DATASET
-pos_pred_ta_tr, cmc_values_ta_tr, \
-pos_pred_raap_raan, cmc_values_raap_raan, \
-pos_pred_tree, cmc_values_tree = get_pos_predictions_cmc_values_all_thresholds(embedding, pos_test_dataset,
-                                                                               size_pos_test, face_emb_dict,
-                                                                               beta_array)
-
-##############
-# Predicions and CMC values in NEGATIVE TEST DATASET
-neg_pred_ta_tr, nfa_values_ta_tr, \
-neg_pred_raap_raan, nfa_values_raap_raan, \
-neg_pred_tree, nfa_values_tree = get_neg_predictions_nfa_values_all_thresholds(embedding, neg_test_dataset,
-                                                                               size_neg_test, face_emb_dict,
-                                                                               beta_array)
-
-##############
-# Get positive accuracy, negative accuracy and overall accuracy with each threshold
-# Save them to accuracies array for all folds
-# Using TA-TR method
-accuracies_ta_tr = get_test_accuracies(cmc_values_ta_tr, nfa_values_ta_tr)
-
-# Using RAAP-RAAN method
-accuracies_raap_raan = get_test_accuracies(cmc_values_raap_raan, nfa_values_raap_raan)
-
-# Using Tree method
-accuracies_tree = get_test_accuracies(cmc_values_tree, nfa_values_tree)
-
-
-##############
-# Get first top-k acc = 1.0 with each threshold.
-top_k_accuracies = first_max_topk_all_thresholds(cmc_values_ta_tr,
-                                                 cmc_values_raap_raan,
-                                                 cmc_values_tree,
-                                                 face_db_size+1)
-
-
-
-"""
-###############################################################################
-SAVE RESULTS TO DISK
-"""
 
 ##############
 # Obtain object to save the results from file
-exp_results = expResults.get_results_from_disk(results_file_path,
+exp_results = expResults.get_results_from_disk(results_snntlonline_hold_out_file_path,
                                                size_pos_test,
                                                size_neg_test,
                                                face_db_size)
+    
 
-##############
-# Add model results to object
-exp_results.append_model(parameters_used, beta_array,
-                         cmc_values_ta_tr, nfa_values_ta_tr,
-                         cmc_values_raap_raan, nfa_values_raap_raan,
-                         cmc_values_tree, nfa_values_tree,
-                         accuracies_ta_tr, accuracies_raap_raan, accuracies_tree,
-                         top_k_accuracies,
-                         val_ranking_hist)
+for alpha_margin, l2_penalizer, batch_all, learn_rate in parameter_space:
 
-##############
-# Save results object to disk
-expResults.save_results_to_disk(exp_results, results_file_path)
+    # Model parameters
+    parameters_used = "SNNTLONLINE." + \
+                      "\nAlpha = " + str(alpha_margin) + \
+                      "\nL2 penalizer = " + str(l2_penalizer) + \
+                      "\nBatch all = " + str(batch_all) + \
+                      "\nTrain epochs = " + str(train_epochs) + \
+                      "\nLearn rate = " + str(learn_rate) + \
+                      "\nBatch size = " +  str(train_batch_size_online)
+
+
+    """
+    ###############################################################################
+    CREATE MODEL AND TRAIN IT
+    """
+    
+    # Reset weights to initial ones
+    embedding.set_weights(emb_initial_weights)
+    siamese_network.set_weights(snn_initial_weights)
+    
+    siamese_model = SNNTLONLINE(siamese_network,             # Underneath network model
+                                 embedding,                   # Underneath embedding generator model
+                                 face_dataset,                # Face database for validation
+                                 alpha_margin,                # Triplet Loss Margin
+                                 l2_penalizer,                # L2 penalization stregth
+                                 batch_all                    # Whether to bacth all triplets or not (only hard ones)
+                                 ) 
+    
+    siamese_model.compile(optimizer=optimizers.Adam(learn_rate))
+    # siamese_model.compile(optimizer=optimizers.Adagrad(learn_rate))
+    # siamese_model.compile(optimizer=optimizers.SGD(learn_rate))
+    
+    
+    # Early stopping to halt training when validation does not improve
+    callbacks = [
+        tf.keras.callbacks.EarlyStopping(
+            # Stop training when `val_loss` is no longer improving
+            monitor="val_mean_pct_ranking",
+            # "no longer improving" being defined as "no better than 0.005, which is 0.5%"
+            min_delta=0.005,
+            # "no longer improving" being further defined as "for at least 3 epochs"
+            patience=3,
+            mode='min',
+            verbose=0,
+        )
+    ]
+    
+    print("\nSNNTLONLINE", alpha_margin, l2_penalizer, batch_all, learn_rate, flush=True)
+    print("Comenzando entrenamiento...", flush=True)
+    history = siamese_model.fit(train_dataset, epochs=train_epochs,
+                                validation_data=pos_val_dataset,
+                                callbacks=callbacks,
+                                verbose=0)
+    
+    
+    # Get hisory of validation mean ranking percentage metric
+    val_ranking_hist = np.array(history.history['val_mean_pct_ranking'])
+    
+    
+    
+    
+    """
+    ###############################################################################
+    CHECK AP AND AN DISTANCES AND GET THRESHOLDS
+    """
+    ##############
+    # Get A-P and A-N distances in training triplets
+    ap_distances, an_distances = get_ap_an_distances_online(embedding, train_dataset)
+    
+    ##############
+    # Obtain decision thresholds
+    beta_array = get_decision_thresholds(ap_distances, an_distances)
+    
+    # # Save plot of distances and thresholds
+    # now = datetime.datetime.now()
+    # time_stamp = str(now.hour+2) + "%" + str(now.minute).zfill(2) + "_" + str(now.day) + "%" + str(now.month) + "%" + str(now.year)
+    
+    # plot_dist_thresholds_hist(ap_distances, an_distances,
+    #                           beta_array[0], beta_array[1], beta_array[2],
+    #                           n_bars=50, path_savefig=path_fig_hist_thresholds+'select_'+time_stamp,
+    #                           title=parameters_used)
+    
+    
+    
+    """
+    ###############################################################################
+    EVALUATE MODEL
+    """
+    
+    ##############
+    # Obtain face embeddings
+    face_emb_dict = obtain_face_DB_emb_dict(embedding, face_dataset)
+    
+    
+    ##############
+    # Predicions and CMC values in POSITIVE TEST DATASET
+    pos_pred_ta_tr, cmc_values_ta_tr, \
+    pos_pred_raap_raan, cmc_values_raap_raan, \
+    pos_pred_tree, cmc_values_tree = get_pos_predictions_cmc_values_all_thresholds(embedding, pos_test_dataset,
+                                                                                   size_pos_test, face_emb_dict,
+                                                                                   beta_array)
+    
+    ##############
+    # Predicions and CMC values in NEGATIVE TEST DATASET
+    neg_pred_ta_tr, nfa_values_ta_tr, \
+    neg_pred_raap_raan, nfa_values_raap_raan, \
+    neg_pred_tree, nfa_values_tree = get_neg_predictions_nfa_values_all_thresholds(embedding, neg_test_dataset,
+                                                                                   size_neg_test, face_emb_dict,
+                                                                                   beta_array)
+    
+    ##############
+    # Get positive accuracy, negative accuracy and overall accuracy with each threshold
+    # Save them to accuracies array for all folds
+    # Using TA-TR method
+    accuracies_ta_tr = get_test_accuracies(cmc_values_ta_tr, nfa_values_ta_tr)
+    
+    # Using RAAP-RAAN method
+    accuracies_raap_raan = get_test_accuracies(cmc_values_raap_raan, nfa_values_raap_raan)
+    
+    # Using Tree method
+    accuracies_tree = get_test_accuracies(cmc_values_tree, nfa_values_tree)
+    
+    
+    ##############
+    # Get first top-k acc = 1.0 with each threshold.
+    top_k_accuracies = first_max_topk_all_thresholds(cmc_values_ta_tr,
+                                                     cmc_values_raap_raan,
+                                                     cmc_values_tree,
+                                                     face_db_size+1)
+    
+    
+    
+    """
+    ###############################################################################
+    SAVE RESULTS TO DISK
+    """
+    
+    ##############
+    # Add model results to object
+    exp_results.append_model(parameters_used, beta_array,
+                             cmc_values_ta_tr, nfa_values_ta_tr,
+                             cmc_values_raap_raan, nfa_values_raap_raan,
+                             cmc_values_tree, nfa_values_tree,
+                             accuracies_ta_tr, accuracies_raap_raan, accuracies_tree,
+                             top_k_accuracies,
+                             val_ranking_hist)
+    
+    ##############
+    # Save results object to disk
+    expResults.save_results_to_disk(exp_results, results_snntlonline_hold_out_file_path)

@@ -46,12 +46,12 @@ from tensorflow.keras.models import load_model
 
 
 
-from global_variables import *
+from macros import *
 from distance_functions import *
 from threshold_detection_functions import *
 from utilities import *
 from test_functions import *
-from siamese_keras_model_online_gen import *
+from snn_tl_online import SNNTLONLINE
 from image_preprocessing_functions import *
 
 
@@ -900,7 +900,7 @@ for alpha_margin, l2_penalizer, batch_all, learn_rate in parameter_space:
 
         ##############
         # CREATE MODEL
-        siamese_model = SiameseModel(siamese_network,             # Underneath network model
+        siamese_model = SNNTLONLINE(siamese_network,             # Underneath network model
                                      embedding,                   # Underneath embedding generator model
                                      face_dataset,                # Face database for validation
                                      alpha_margin,                # Triplet Loss Margin

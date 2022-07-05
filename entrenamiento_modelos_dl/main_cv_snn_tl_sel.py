@@ -39,9 +39,6 @@ from sklearn.tree import export_text
 
 import tensorflow as tf
 from tensorflow.keras import layers
-from tensorflow.keras import regularizers
-from tensorflow.keras import activations
-from tensorflow.keras import losses
 from tensorflow.keras import optimizers
 from tensorflow.keras import metrics
 from tensorflow.keras import Model
@@ -54,7 +51,7 @@ from distance_functions import *
 from threshold_detection_functions import *
 from utilities import *
 from test_functions import *
-from snn_sigmoid import SNNSIGMOID
+from snn_tl_offline import SNNTLOffline
 from image_preprocessing_functions import *
 
 
@@ -199,21 +196,6 @@ fold_individuals = {}
 for i in range(0, n_folds):
     fold_individuals[i] = (pos_test_ind_splits[i], pos_val_ind_splits[i], neg_ind_splits[i])
 
-
-
-"""
-###############################################################################
-UTKFACE DATASET IMAGE PATHS
-"""
-all_utk_im_names = os.listdir(UTKFace_path)
-
-all_utk_im_paths = [ UTKFace_path + "/" + face_im for face_im in all_utk_im_names ]
-
-random.shuffle(all_utk_im_paths)
-
-
-
-
 """
 As each fold will be sometimes used for training and sometimes used for 
 test, training and test datasets will be created for each one of the folds.
@@ -223,13 +205,14 @@ test, training and test datasets will be created for each one of the folds.
 ###############################################################################
 TRAINING DATASETS
 
-Each fold has got one positive training dataset and one negative training
-dataset associated, containing pairs of face images and skull images
-of the positive and negative individuals associated to that fold.
+Each fold has got one training dataset associated, containing triplets 
+generated with face images and skull images of the positive (test and 
+validation) and negative individuals associated to that fold.
 
-Training pairs are formed by a face image and a positive example
-(a skull image of the same person) or a negative example
-(a face image of other person).
+Training triplets are formed by an anchor image (a face image), a 
+positive example (a skull image of the same person) and a negative 
+example (a face image of other person). Only the training individuals 
+are used for generating these triplets.
 
 Train dataset for fold i is composed by training triplets formed with
 all the individuals (test and validation) of that fold. This dataset
@@ -237,137 +220,134 @@ is used for training when evaluating in the other folds.
 """
 
 # Number of available skull images for positive individuals
-num_pos_images = 100
+num_pos_images = len(os.listdir(skull_im_path + "/" + pos_individuals[0]))
 
-# Number of skull images to be used for negative individuals 
-num_neg_images = 100
+# Number of skull images to be used for negative individuals in order to have the
+# the same total number of skull images of positive and negative individuals and
+# and generate the training triplets
+num_neg_images = math.ceil(num_pos_images * len(pos_individuals) /
+                           len(neg_individuals))
 
+"""
+The training datasets (for each one of the folds) are generated 
+using a TensorFlow pipeline:
 
+1.   Generate a list with Anchor image paths, a list with Positive image 
+        pahts and a list with Negative image paths.
+2.   Randomly shuffle the lists. The anchor list and the positive list 
+        are shuffle in the same exact order.
+3.   Create one dataset from slices from each one of the previous lists. 
+        These three datasets contain the paths of the respective
+        images.
+4.   Create the training dataset comprising in triplets the paths of the
+        anchor, positive and negative images.
+5.   Map over the training dataset the function to read and return image. 
+        This function transforms the dataset from one containing 
+        paths to one containing images.
 
-# # UTKFace dataset divided into folds
-# num_im_utkface_total = num_neg_ind * num_neg_images
+For each fold, a training dataset is generated and then saved to a 
+dictionary (`fold_train_datasets`) where the keys are the folds and 
+the values are the training datasets.
+"""
 
-# utk_im_names = random.sample(os.listdir(UTKFace_path), num_im_utkface_total)
-# utk_im_paths = [ UTKFace_path + "/" + face_im for face_im in utk_im_names ]
-
-# im_per_fold = num_im_utkface_total // n_folds
-
-
-
-fold_pos_train_datasets = {}
-fold_neg_train_datasets = {}
+fold_train_datasets = {}
 
 # For each Fold
 for i in range(0, n_folds):
-    ##########################################
-    # Get all skull image paths of positive train individuals
-
     ##############
-    # Path of positive skulls using test individuals
-    # Get the path of a skull image from skull_ind:
-    #   For all the skull_ind that are positive train individuals
-    #       For each skull image of skull_ind
-    pos_skulls_path_list_1 = [ skull_im_path + "/" + skull_ind + "/" + skull_im                   # Skull image path
-                                    for skull_ind in fold_individuals[i][0]                           # For each positive train individual
-                                        for skull_im in os.listdir(skull_im_path + "/" + skull_ind)] # For each skull image of that individual
-    
-    ##############
-    # Path of faces associated to positive skulls using test individuals    
+    # Path of Anchor images using test individuals
     # Get the face image path from the face_im_dict of the individual skull_ind:
     #   For all the skull_ind that are positive train individuals
     #       For each skull image of skull_ind
-    pos_faces_path_list_1 = [ face_im_dict[df_info.loc[df_info['Individuo'] == skull_ind].iloc[0,1]] # Image path gotten from dictionary with the image name (obtained from info df)
-                                    for skull_ind in fold_individuals[i][0]                              # For each positive train individual 
-                                        for skull_im in os.listdir(skull_im_path + "/" + skull_ind)]    # For each skull image of that individual
-    
-    
+    anchor_path_list_1 = [ face_im_dict[df_info.loc[df_info['Individuo'] == skull_ind].iloc[0,1]] # Image path gotten from dictionary with the image name (obtained from info df)
+                              for skull_ind in fold_individuals[i][0]                             # For each positive train individual 
+                                  for skull_im in os.listdir(skull_im_path + "/" + skull_ind)]    # For each skull image of that individual
     ##############
-    # Path of positive skulls using validation individuals
+    # Path of Positive images using test individuals
     # Get the path of a skull image from skull_ind:
     #   For all the skull_ind that are positive train individuals
     #       For each skull image of skull_ind
-    pos_skulls_path_list_2 = [ skull_im_path + "/" + skull_ind + "/" + skull_im                   # Skull image path
-                                    for skull_ind in fold_individuals[i][1]                           # For each positive train individual
-                                        for skull_im in os.listdir(skull_im_path + "/" + skull_ind)] # For each skull image of that individual
-    
+    pos_path_list_1 = [ skull_im_path + "/" + skull_ind + "/" + skull_im                   # Skull image path
+                          for skull_ind in fold_individuals[i][0]                          # For each positive train individual 
+                              for skull_im in os.listdir(skull_im_path + "/" + skull_ind)] # For each skull image of that individual
+     
     
     ##############
-    # Path of faces associated to positive skulls using validation individuals       
+    # Path of Anchor images using validation individuals
     # Get the face image path from the face_im_dict of the individual skull_ind:
     #   For all the skull_ind that are positive train individuals
     #       For each skull image of skull_ind
-    pos_faces_path_list_2 = [ face_im_dict[df_info.loc[df_info['Individuo'] == skull_ind].iloc[0,1]] # Image path gotten from dictionary with the image name (obtained from info df)
-                                    for skull_ind in fold_individuals[i][1]                              # For each positive train individual 
-                                        for skull_im in os.listdir(skull_im_path + "/" + skull_ind)]    # For each skull image of that individual
-    
-    
-    pos_skulls_path_list = pos_skulls_path_list_1 + pos_skulls_path_list_2
-    pos_faces_path_list = pos_faces_path_list_1 + pos_faces_path_list_2
-    
+    anchor_path_list_2 = [ face_im_dict[df_info.loc[df_info['Individuo'] == skull_ind].iloc[0,1]] # Image path gotten from dictionary with the image name (obtained from info df)
+                              for skull_ind in fold_individuals[i][1]                             # For each positive train individual 
+                                  for skull_im in os.listdir(skull_im_path + "/" + skull_ind)]    # For each skull image of that individual
+    ##############
+    # Path of Positive images using validation individuals
+    # Get the path of a skull image from skull_ind:
+    #   For all the skull_ind that are positive train individuals
+    #       For each skull image of skull_ind
+    pos_path_list_2 = [ skull_im_path + "/" + skull_ind + "/" + skull_im                   # Skull image path
+                          for skull_ind in fold_individuals[i][1]                          # For each positive train individual 
+                              for skull_im in os.listdir(skull_im_path + "/" + skull_ind)] # For each skull image of that individual
     
     
     ##############
-    # Path of negative skulls using validation individuals
+    # Get total anchor and positive images
+    anchor_path_list = anchor_path_list_1 + anchor_path_list_2
+    pos_path_list = pos_path_list_1 + pos_path_list_2
+    
+    ##############
+    # Path of Negative images
     # Get the path of a skull image from skull_ind:
     #   For all the skull_ind that are negative train individuals
     #       For each skull image of skull_ind
     #           If index is lower than the number of images needed
-    neg_skulls_path_list = [ skull_im_path + "/" + skull_ind + "/" + skull_im                  # Skull image path
-                                for skull_ind in fold_individuals[i][2]                          # For each individual in the skull dataset
-                                    for skull_im in os.listdir(skull_im_path + "/" + skull_ind) # For each skull image of that individual
-                                        if int(skull_im.split("_")[3].split(".")[0]) < num_neg_images ]
-    
-    
+    neg_path_list = [ skull_im_path + "/" + skull_ind + "/" + skull_im                  # Skull image path
+                        for skull_ind in fold_individuals[i][2]                         # For each individual in the skull dataset
+                            for skull_im in os.listdir(skull_im_path + "/" + skull_ind) # For each skull image of that individual
+                                if int(skull_im.split("_")[3].split(".")[0]) < num_neg_images ]
     ##############
-    # Path of faces not associated to skulls using validation individuals
-    # Get one face image from UTKFace dataset for each negative skull image 
-    # neg_faces_path_list = utk_im_paths[im_per_fold*i : im_per_fold*(i+1)]
-    
-    # Get one face image from UTKFace dataset for each negative skull image 
-    num_im_utkface = len(neg_skulls_path_list)
-    
-    neg_faces_path_list = all_utk_im_paths[-num_im_utkface:]
-    del all_utk_im_paths[-num_im_utkface:]
+    # Shuffle randomly anchor and positive images (together) and negative images
+    # Zip together anchor and positive images
+    anchor_positive_zip = list( zip(anchor_path_list, pos_path_list) )
 
+    # Randomly shuffle the zip altogether
+    random.shuffle(anchor_positive_zip)
 
-    # Generate labels for positive pairs (label 1) and negative pairs (label 0)
-    pos_labels = [1 for i in range(0, len(pos_faces_path_list))]
-    neg_labels = [0 for i in range(0, len(neg_faces_path_list))]
-    
-    # No need to shuffle images in order to combine them (as with triplets in Triplet Loss SNN)
-    
-    pos_faces_dataset  = tf.data.Dataset.from_tensor_slices(pos_faces_path_list)  # Positive face path dataset
-    pos_skulls_dataset = tf.data.Dataset.from_tensor_slices(pos_skulls_path_list) # Positive skull path dataset
-    
-    pos_labels_dataset = tf.data.Dataset.from_tensor_slices(pos_labels) # Positive labels dataset
-    
-    neg_faces_dataset  = tf.data.Dataset.from_tensor_slices(neg_faces_path_list)  # Negative face path dataset
-    neg_skulls_dataset = tf.data.Dataset.from_tensor_slices(neg_skulls_path_list) # Negative skull path dataset
-    
-    neg_labels_dataset = tf.data.Dataset.from_tensor_slices(neg_labels) # Negative labels dataset
-    
-    
+    # Unzip
+    anchor_path_list, pos_path_list = zip(*anchor_positive_zip)
+
+    # Convert to list as the zip output comes as tuples
+    anchor_path_list, pos_path_list = list(anchor_path_list), list(pos_path_list)
+
+    # Randomly shuffle negative images
+    random.shuffle(neg_path_list)
+
     ##############
-    # Create Tf dataset comprising pairs of image paths (with them grouped in triplets)
-    fold_i_pos_pairs_dataset = tf.data.Dataset.zip(((pos_faces_dataset, pos_skulls_dataset), 
-                                                    pos_labels_dataset)) # Positive pairs path dataset
-    
-    fold_i_neg_pairs_dataset = tf.data.Dataset.zip(((neg_faces_dataset, neg_skulls_dataset), 
-                                                    neg_labels_dataset)) # Negative pairs path dataset
-    
+    # Create a Tf dataset from each of the previous path lists
+    anchor_dataset   = tf.data.Dataset.from_tensor_slices(anchor_path_list) # Anchors path dataset
+    positive_dataset = tf.data.Dataset.from_tensor_slices(pos_path_list)    # Positives path dataset
+    negative_dataset = tf.data.Dataset.from_tensor_slices(neg_path_list)    # Negative path dataset
+
+    ##############
+    # Create Tf dataset comprising anchor-positive-negative image paths (with them grouped in triplets)
+    fold_i_triplets_dataset = tf.data.Dataset.zip((anchor_dataset, positive_dataset, negative_dataset)) # Triplets path dataset
+    fold_i_triplets_dataset = fold_i_triplets_dataset.shuffle(buffer_size=1024, seed=SEED)
+
     ##############
     # Transform dataset from one with paths to the real one with images
-    fold_i_train_pos_dataset = fold_i_pos_pairs_dataset.map(get_pair_im)
-    fold_i_train_neg_dataset = fold_i_neg_pairs_dataset.map(get_pair_im)
     
-    fold_i_train_pos_dataset = fold_i_train_pos_dataset.prefetch(8) # Setting prefetch buffer size to 8
-    fold_i_train_neg_dataset = fold_i_train_neg_dataset.prefetch(8) # Setting prefetch buffer size to 8
-    
+    # Map the funtions to read the images over the dataset to get the image dataset (previously the dataset contained paths)
+    fold_i_train_dataset = fold_i_triplets_dataset.map(get_triplet)
+
+    # Batch the dataset
+    fold_i_train_dataset = fold_i_train_dataset.batch(train_batch_size)
+
+    # Set prefecth buffer
+    fold_i_train_dataset = fold_i_train_dataset.prefetch(8) # Setting prefetch buffer size to 8
 
     ##############
-    # Save the datasets to Folds dataset dictionaries
-    fold_pos_train_datasets[i] = fold_i_train_pos_dataset
-    fold_neg_train_datasets[i] = fold_i_train_neg_dataset
+    # Save the dataset to Folds dataset dictionary
+    fold_train_datasets[i] = fold_i_train_dataset
 
 
 
@@ -410,13 +390,15 @@ for i in range(0, n_folds):
     val_pos_skull_label_dataset  = tf.data.Dataset.from_tensor_slices(val_pos_skull_label_list)  # Face validation images names dataset
     
     fold_i_pos_val_pairs_dataset = tf.data.Dataset.zip((val_pos_skull_path_dataset, val_pos_skull_label_dataset)) # Test pairs path dataset
-    
     pos_val_pairs_dataset = fold_i_pos_val_pairs_dataset.shuffle(buffer_size=1024, seed=SEED)
     
     
     fold_i_pos_val_dataset = fold_i_pos_val_pairs_dataset.map(get_pair)
     
-    fold_i_pos_val_dataset = fold_i_pos_val_dataset.batch(validation_batch_size)
+    size_pos_val = int(fold_i_pos_val_dataset.__len__().numpy())
+    
+    test_batch_size = size_pos_val
+    fold_i_pos_val_dataset = fold_i_pos_val_dataset.batch(test_batch_size)
     fold_i_pos_val_dataset = fold_i_pos_val_dataset.prefetch(8) # Setting prefetch buffer size to 8
     
     ##############
@@ -488,12 +470,17 @@ for i in range(0, n_folds):
     ##############
     # Create Tf dataset comprising skull image paths and their labels (with them grouped in pairs)
     fold_i_pos_test_pairs_dataset = tf.data.Dataset.zip((pos_skull_path_dataset, pos_skull_label_dataset)) # Test pairs path dataset
+    fold_i_pos_test_pairs_dataset = fold_i_pos_test_pairs_dataset.shuffle(buffer_size=1024, seed=SEED)
 
     ##############
     # Transform dataset from one with paths to the real one with images
     
     # Map the funtions to read the images over the dataset to get the image dataset (previously the dataset contained paths)
     fold_i_pos_test_dataset = fold_i_pos_test_pairs_dataset.map(get_pair)
+    
+    size_pos_test = int(fold_i_pos_test_dataset.__len__().numpy())
+
+    test_batch_size = size_pos_test
 
     # Batch the dataset
     fold_i_pos_test_dataset = fold_i_pos_test_dataset.batch(test_batch_size)
@@ -510,7 +497,7 @@ num_pos_ind_test = 0
 
 for i in range(0, n_folds):
     num_pos_ind_test += len(fold_individuals[i][0])
-    
+
 
 """
 ###############################################################################
@@ -539,12 +526,17 @@ for i in range(0, n_folds):
     ##############
     # Create a Tf dataset from the previous path list
     neg_skull_path_dataset = tf.data.Dataset.from_tensor_slices(neg_skull_path_list)   # Skull test images path dataset
-    
+    neg_skull_path_dataset = neg_skull_path_dataset.shuffle(buffer_size=1024, seed=SEED)
+
     ##############
     # Transform dataset from one with paths to the real one with images
     
     # Map the funtions to read the images over the dataset to get the image dataset (previously the dataset contained paths)
     fold_i_neg_test_dataset = neg_skull_path_dataset.map(get_image)
+    
+    size_neg_test = int(fold_i_neg_test_dataset.__len__().numpy())
+
+    test_batch_size = size_neg_test
 
     # Batch the dataset
     fold_i_neg_test_dataset = fold_i_neg_test_dataset.batch(test_batch_size)
@@ -562,7 +554,6 @@ num_neg_ind_test = 0
 for i in range(0, n_folds):
     num_neg_ind_test += len(fold_individuals[i][2])
     
-
 """
 ###############################################################################
 FACE DATASET
@@ -571,8 +562,21 @@ Face dataset is composed of pairs of face images and their names.
 This datasets is common to all the folds.
 """
 
+################################
+#  UTKFACE DATASET IMAGE PATHS
+all_utk_im_names = os.listdir(UTKFace_path)
+
+all_utk_im_paths = [ UTKFace_path + "/" + face_im for face_im in all_utk_im_names ]
+
+random.shuffle(all_utk_im_paths)
+
+
+################################
+# CREATE FACE DATASETS
+
 face_db_size = 100
 fold_face_datasets = {}
+
 
 # For each Fold
 for i in range(0, n_folds):
@@ -649,11 +653,13 @@ accepts `160x160` shaped images.
 
 # For each Fold
 for i in range(0, n_folds):
-    # Map resizing in positive training dataset for that fold
-    fold_pos_train_datasets[i] = fold_pos_train_datasets[i].map(resize_pair)
-    
-    # Map resizing in negative training dataset for that fold
-    fold_neg_train_datasets[i] = fold_neg_train_datasets[i].map(resize_pair)
+    # Map resizing in training dataset for that fold
+    fold_train_datasets[i] = fold_train_datasets[i].map(
+    lambda anchor, positive, negative:
+        (resize_im(anchor, faceNet_shape),
+         resize_im(positive, faceNet_shape),
+         resize_im(negative, faceNet_shape))
+    )
     
     # Map resizing in validation dataset for that fold
     fold_val_datasets[i] = fold_val_datasets[i].map(
@@ -698,114 +704,63 @@ https://arxiv.org/abs/1904.11685
 # For each Fold
 for i in range(0, n_folds):
     # Map resizing in training dataset for that fold
-    fold_pos_train_datasets[i] = fold_pos_train_datasets[i].map(data_aug_pairs)
-    
+    fold_train_datasets[i] = fold_train_datasets[i].map(
+        lambda anchor, positive, negative:
+            (data_augmentation_faces(anchor), positive, negative)
+    )
 
 
 ###############################################################################
 ###############################################################################
 ###############################################################################
-# CREATE FINAL TRAINING DATASET
+# SET UP THE SIAMESE NETWORK
 """
-Combine positive and negative train datasets
-"""
-
-fold_train_datasets = {}
-
-
-# For each Fold
-for i in range(0, n_folds):
-    fold_i_train_dataset = fold_pos_train_datasets[i].concatenate(fold_neg_train_datasets[i])
-    
-    # Random shuffle all pairs
-    fold_i_train_dataset = fold_i_train_dataset.shuffle(buffer_size=1024, seed=SEED)
-    
-    # Batch dataset
-    fold_i_train_dataset = fold_i_train_dataset.batch(train_batch_size)
-    fold_i_train_dataset = fold_i_train_dataset.prefetch(8) # Setting prefetch buffer size to 8
-    
-    fold_train_datasets[i] = fold_i_train_dataset
-
-
 ###############################################################################
-###############################################################################
-###############################################################################
-# SET UP THE NEURAL NETWORK WITHOUT REGULARIZATION
+CREATE EMBEDDING GENERATOR MODEL
 """
-The network has got two inpur channels (face and skull images).
-It generates the embedding of both images, then combines them by
-concatenating them together and generates a sigmoid output.
-
-An output of 1 means images are totally alike, whereas an output of 0
-means they are totally different.
-"""
-
 # Create embedding generator model
 
-embedding_sin_reg = load_model(faceNet_model_path)
+embedding = load_model(faceNet_model_path)
 
-# Save weights
-emb_initial_weights_sin_reg = embedding_sin_reg.get_weights()
+emb_initial_weights = embedding.get_weights()
 
+# retrainables_layers = ["Bottleneck", "Block8", "Block17", "Mixed_7a"]
+retrainables_layers = ["Bottleneck", "Block8"]
 
-# CREATE NEURAL NETWORK MODEL
+for layer in embedding.layers:
+    if (    any(retrain_layer in layer.name for retrain_layer in retrainables_layers) and 
+            (not isinstance(layer, layers.BatchNormalization))
+       ):
+        layer.trainable = True
+    else:
+        layer.trainable = False
 
-# Two input channels
-input1_sin_reg = layers.Input(name="input1", shape=faceNet_shape + (3,))
-input2_sin_reg = layers.Input(name="input2", shape=faceNet_shape + (3,))
+"""
+###############################################################################
+CREATE SNN WITH THE PREVIOUS EMBEDDING GENERATOR
+"""
+# Create snn with the previous embedding generator
 
-# Generate both embeddings
-emb1_sin_reg = embedding_sin_reg(input1_sin_reg)
-emb2_sin_reg = embedding_sin_reg(input2_sin_reg)
+anchor_input   = layers.Input(name="anchor",   shape=faceNet_shape + (3,))
+positive_input = layers.Input(name="positive", shape=faceNet_shape + (3,))
+negative_input = layers.Input(name="negative", shape=faceNet_shape + (3,))
 
-# Concantenate embeddings
-x_sin_reg = layers.concatenate([emb1_sin_reg, emb2_sin_reg], axis=1)
+# SNN inputs the anchor, positive and negative images and outputs the embedding of each image
+siamese_network = Model(
+    inputs  = [anchor_input, positive_input, negative_input],
+    outputs = [ embedding(anchor_input),
+                embedding(positive_input),
+                embedding(negative_input)  ]
+)
 
-# Add first Dense layer
-x_sin_reg = layers.Dropout(0.5)(x_sin_reg)
-x_sin_reg = layers.Dense(128)(x_sin_reg)
-x_sin_reg = layers.BatchNormalization()(x_sin_reg)
-x_sin_reg = layers.Activation(activations.relu)(x_sin_reg)
-
-# Add second Dense layer
-x_sin_reg = layers.Dropout(0.5)(x_sin_reg)
-x_sin_reg = layers.Dense(32)(x_sin_reg)
-x_sin_reg = layers.BatchNormalization()(x_sin_reg)
-x_sin_reg = layers.Activation(activations.relu)(x_sin_reg)
-
-# Add output neuron
-x_sin_reg = layers.Dense(1)(x_sin_reg)
-
-# Sigmoid output
-output_sin_reg = layers.Activation(activations.sigmoid)(x_sin_reg)
-
-# Create whole model
-network_sin_reg = Model([input1_sin_reg, input2_sin_reg], output_sin_reg)
-# model = SNNSIGMOID(_inputs=[input1, input2], _outputs=output, face_dataset=face_dataset)
-# model_sin_reg = SNNSIGMOID(network_sin_reg, face_dataset)
-
-# Save weights
-# model_initial_weights_sin_reg = model_sin_reg.get_weights()
-network_initial_weights_sin_reg = network_sin_reg.get_weights()
+snn_initial_weights = siamese_network.get_weights()
 
 
 """
 ###############################################################################
-OBTAIN OBJECT TO SAVE THE RESULTS FROM FILE
-"""
-exp_results = expResultsTrad.get_results_from_disk(results_cv_traditional_nn_file_path,
-                                               num_pos_ind_test,
-                                               num_neg_ind_test,
-                                               face_db_size)
-
-
-"""
-###############################################################################
-CROSS VALIDATION OF THE MODEL WITHOUT REGULARIZATION
+CROSS VALIDATION OF THE MODEL
 """
 
-#########################
-# TRAINING PARAMETERS
 
 train_epochs       = 1000             # Training epochs (not relevant, using Early Stopping)
 
@@ -813,51 +768,85 @@ train_epochs       = 1000             # Training epochs (not relevant, using Ear
 callbacks = [
     tf.keras.callbacks.EarlyStopping(
         # Stop training when `val_loss` is no longer improving
-        # monitor="val_mean_pct_ranking",
-        monitor="val_topk_acc",
+        monitor="val_mean_pct_ranking",
         # "no longer improving" being defined as "no better than 0.005, which is 0.5%"
         min_delta=0.005,
         # "no longer improving" being further defined as "for at least 3 epochs"
-        mode='min',
         patience=3,
-        restore_best_weights=True,
+        mode='min',
         verbose=0,
     )
 ]
 
 
-# Create hyperparameter space
 
-# Learn rates
-learn_rates = [1e-3, 1e-4, 1e-5, 1e-6] # Learning rate of the Optimizer in training
+# Create parameter space with the next format:
+#       [alpha, l2_pen, l_r]
 
-# Retrainable layers combinations
-retrain_layers_comb = [ ["Bottleneck"],
-                        ["Bottleneck", "Block8"],
-                        ["Bottleneck", "Block8", "Mixed_7a"],
-                        ["Bottleneck", "Block8", "Mixed_7a", "Block17"] ]
-                        
-parameter_space_sin_reg = [ [1e-5, ["Bottleneck", "Block8", "Mixed_7a"]],
-                            [1e-4, ["Bottleneck"]],
-                            [1e-5, ["Bottleneck", "Block8"]],
-                            [1e-5, ["Bottleneck", "Block8", "Mixed_7a", "Block17"]],
-                            [1e-4, ["Bottleneck", "Block8"]]
-                          ]
 
-for learn_rate, retrainables_layers in parameter_space_sin_reg:
-                  
+parameter_space = [ 
+                    [  5, 0.01, 1e-4], # From best top-k
+                    [0.2, 0.01, 1e-4], # From best top-k
+                    [ 20, 0.01, 1e-5], # From best top-k
+                    [  5,  0.2, 1e-4], # From best acc
+                    [ 10,  0.2, 1e-4], # From best acc
+                    [0.2,  0.2, 1e-4]  # From best acc
+                  ]
+
+# parameter_space = [ 
+#                     [  5, 0, 0.01,   0,   0, False, 1e-4], # Sin online, sin seleccion, sin Cond TL (best top-k)
+#                     [0.2, 0, 0.01,   0,   0, False, 1e-4], # Sin online, sin seleccion, sin Cond TL (best top-k)
+#                     [ 20, 0, 0.01,   0,   0, False, 1e-5], # Sin online, sin seleccion, sin Cond TL (best top-k)
+#                     [  5, 0,  0.2,   0,   0, False, 1e-4], # Sin online, sin seleccion, sin Cond TL (best acc)
+#                     [ 10, 0,  0.2,   0,   0, False, 1e-4], # Sin online, sin seleccion, sin Cond TL (best acc)
+#                     [0.2, 0,  0.2,   0,   0, False, 1e-4], # Sin online, sin seleccion, sin Cond TL (best acc)
+                    
+#                     [  5, 0,  0.2, 0.2, 0.9, False, 1e-4], # Sin online, sin seleccion, con Cond TL (best top-k)
+#                     [  5, 0,  0.2, 0.5, 0.5, False, 1e-4], # Sin online, sin seleccion, con Cond TL (best top-k)
+#                     [  5, 0,  0.2, 0.2, 0.1, False, 1e-4], # Sin online, sin seleccion, con Cond TL (best top-k)
+#                     [0.2, 0, 0.01, 0.1, 0.1, False, 1e-6], # Sin online, sin seleccion, con Cond TL (best acc)
+#                     [ 10, 0,  0.2, 0.5, 0.1, False, 1e-6], # Sin online, sin seleccion, con Cond TL (best acc)
+#                     [  5, 0,  0.2, 0.1, 0.1, False, 1e-6], # Sin online, sin seleccion, con Cond TL (best acc)
+                    
+#                     [ 20, 0, 0.01,   0,   0,  True, 1e-4], # Sin online, con seleccion, sin Cond TL (best top-k)
+#                     [  5, 0,  0.1,   0,   0,  True, 1e-6], # Sin online, con seleccion, sin Cond TL (best top-k)
+#                     [ 20, 0,  0.1,   0,   0,  True, 1e-4], # Sin online, con seleccion, sin Cond TL (best top-k)
+#                     [ 10, 0,  0.2,   0,   0,  True, 1e-4], # Sin online, con seleccion, sin Cond TL (best acc)
+#                     [  5, 0,  0.2,   0,   0,  True, 1e-4], # Sin online, con seleccion, sin Cond TL (best acc)
+#                     [ 20, 0,  0.4,   0,   0,  True, 1e-4]  # Sin online, con seleccion, sin Cond TL (best acc)
+#                   ]
+
+
+
+##############
+# Obtain object to save the results from file
+exp_results = expResults.get_results_from_disk(results_cv_without_on_file_path,
+                                               num_pos_ind_test,
+                                               num_neg_ind_test,
+                                               face_db_size)
+
+for alpha_margin, l2_penalizer, learn_rate in parameter_space:
+                      
     print(flush=True)
     ##############
     # Initialize results lists to be stored in disk
-    model_cmc_values = [] # All CMC values obtained with current model 
-    model_nfa_values = [] # All NFA values obtained with current model 
+    model_cmc_values_ta_tr = [] # All CMC values obtained with current model (using TA-TR)
+    model_nfa_values_ta_tr = [] # All NFA values obtained with current model (using TA-TR)
+
+    model_cmc_values_raap_raan = [] # All CMC values obtained with current model (using RAAP-RAAN)
+    model_nfa_values_raap_raan = [] # All NFA values obtained with current model (using RAAP-RAAN)
+
+    model_cmc_values_tree = [] # All CMC values obtained with current model (using Tree)
+    model_nfa_values_tree = [] # All NFA values obtained with current model (using Tree)
 
     # Create accuracies array for all folds (positive accuracy, negative accuracy and overall accuracy)
-    accuracies = np.empty((n_folds,3))
+    accuracies_ta_tr     = np.empty((n_folds,3)) # (using TA-TR)
+    accuracies_raap_raan = np.empty((n_folds,3)) # (using RAAP-RAAN)
+    accuracies_tree      = np.empty((n_folds,3)) # (using Tree)
     
     model_val_ranking_hist = [] 
     
-    model_top_k_acc = np.empty((n_folds))
+    model_top_k_acc      = np.empty((n_folds,3))
 
 
     # For each Test Fold. In iteration i, Fold i is used for Tets and teh rest are used for training
@@ -891,136 +880,145 @@ for learn_rate, retrainables_layers in parameter_space_sin_reg:
             train_dataset = train_dataset.concatenate( fold_train_datasets[ train_folds[i] ] )
         
         
+        ###############################################################################
+        # CREATE MODEL AND TRAIN IT
+
         ##############
-        # SET RETRAINABLE LAYERS IN EMBEDDING GENERATOR
-        for layer in embedding_sin_reg.layers:
-            # Reset trainable to false
-            layer.trainable = False 
-            
-            # Only trainable if is in list (and it is not BatchNormalization)
-            if (    any(retrain_layer in layer.name for retrain_layer in retrainables_layers) and 
-                    (not isinstance(layer, layers.BatchNormalization))
-               ):
-                layer.trainable = True
+        # CREATE MODEL
+        siamese_model = SNNTLOffline(siamese_network,             # Underneath network model
+                                 embedding,                   # Underneath embedding generator model
+                                 face_dataset,                # Face database for validation
+                                 alpha_margin,                # Triplet Loss Margin
+                                 l2_penalizer                 # L2 penalization stregth
+                                 ) 
+
+        
+        # siamese_model.compile(optimizer=optimizers.Adagrad(learn_rate))
+        siamese_model.compile(optimizer=optimizers.Adam(learn_rate))
     
         
         ##############
-        # COMPILE MODEL 
-        
-        model_sin_reg = SNNSIGMOID(network_sin_reg, face_dataset)
-        
-        # Reset weights to initial ones
-        embedding_sin_reg.set_weights(emb_initial_weights_sin_reg)
-        # model_sin_reg.set_weights(model_initial_weights_sin_reg)
-        network_sin_reg.set_weights(network_initial_weights_sin_reg)
-        
-        model_sin_reg.compile(optimizer=optimizers.Adam(learn_rate),
-                              loss=losses.MeanSquaredError())
+        # Restore initial weights in embedding generator and siamese_network
+        embedding.set_weights(emb_initial_weights)
+        siamese_network.set_weights(snn_initial_weights)
         
         
         ##############
         # TRAIN MODEL
 
-        print("\nModelo", retrainables_layers, learn_rate, flush=True)
+        print("\nSNNTLBASIC", alpha_margin, l2_penalizer, learn_rate, flush=True)
         print("Comenzando entrenamiento del fold ", test_fold, "...", sep='', flush=True)
         
-        history = model_sin_reg.fit(train_dataset, epochs=train_epochs,
-                            validation_data=pos_val_dataset,
-                            callbacks=callbacks,
-                            verbose=0)
+        history = siamese_model.fit(train_dataset, epochs=train_epochs,
+                                    validation_data=pos_val_dataset,
+                                    callbacks=callbacks,
+                                    verbose=0)
         
         
         # Get hisory of validation mean ranking percentage metric
-        val_ranking_hist = np.array(history.history['val_topk_acc'])
+        val_ranking_hist = np.array(history.history['val_mean_pct_ranking'])
         
         model_val_ranking_hist.append(val_ranking_hist)
 
 
         ###############################################################################
-        # CHECK DISTANCES AND GET THRESHOLDS
-        
-        ##############
-        # Get Positive Training dataset from merging the other folds' positive training datasets
-        # Merge all training datatasets corresponding to the train_folds
-        pos_train_dataset = fold_pos_train_datasets[train_folds[0]] # Initialize train dataset to the training dataset of the first train fold
-
-        # Concatente the training datasets of the remaining train folds
-        for i in range(1, len(train_folds)):
-            pos_train_dataset = pos_train_dataset.concatenate( fold_pos_train_datasets[ train_folds[i] ] )
-        
-        # Get predictions for positive train pairs
-        pos_train_pred = model_sin_reg.predict(pos_train_dataset.batch(train_batch_size)).flatten()
-        
-        ##############
-        # Get Negative Training dataset from merging the other folds' negative training datasets
-        # Merge all training datatasets corresponding to the train_folds
-        neg_train_dataset = fold_neg_train_datasets[train_folds[0]] # Initialize train dataset to the training dataset of the first train fold
-
-        # Concatente the training datasets of the remaining train folds
-        for i in range(1, len(train_folds)):
-            neg_train_dataset = neg_train_dataset.concatenate( fold_neg_train_datasets[ train_folds[i] ] )
-            
-        # Get predictions for negative train pairs
-        neg_train_pred = model_sin_reg.predict(neg_train_dataset.batch(train_batch_size)).flatten()
-        
-        ##############
-        # Obtain decision threshold
-        beta_threshold, metrics = get_decision_threshold_trad_nn(pos_train_pred, neg_train_pred)  
-        
-        
-        ###############################################################################
-        # EVALUATE MODEL
+        # CHECK AP AND AN DISTANCES AND GET THRESHOLDS
 
         ##############
-        # CMC values in POSITIVE TEST DATASET
-        cmc_values = model_sin_reg.get_cmc_values(pos_test_dataset, beta_threshold)
-        
+        # Get A-P and A-N distances in training triplets
+        ap_distances, an_distances = get_ap_an_distances(embedding, train_dataset)
+
+        ##############
+        # Obtain decision thresholds
+        beta_array = get_decision_thresholds(ap_distances, an_distances)
+
+        ##############
+        # Obtain face embeddings
+        face_emb_dict = obtain_face_DB_emb_dict(embedding, face_dataset)
+
+        ##############
+        # Predicions and CMC values in POSITIVE TEST DATASET
+        pos_pred_ta_tr, cmc_values_ta_tr, \
+        pos_pred_raap_raan, cmc_values_raap_raan, \
+        pos_pred_tree, cmc_values_tree = get_pos_predictions_cmc_values_all_thresholds(embedding, pos_test_dataset,
+                                                                                       size_pos_test, face_emb_dict,
+                                                                                       beta_array)
         # Save CMC values to model CMC values array
-        model_cmc_values.append(cmc_values)
-        
+        model_cmc_values_ta_tr.append(cmc_values_ta_tr)
+        model_cmc_values_raap_raan.append(cmc_values_raap_raan)
+        model_cmc_values_tree.append(cmc_values_tree)
+
         ##############
-        # NFA values in NEGATIVE TEST DATASET
-        nfa_values = model_sin_reg.get_nfa_values(neg_test_dataset, beta_threshold)
-        
+        # Predicions and CMC values in NEGATIVE TEST DATASET
+        neg_pred_ta_tr, nfa_values_ta_tr, \
+        neg_pred_raap_raan, nfa_values_raap_raan, \
+        neg_pred_tree, nfa_values_tree = get_neg_predictions_nfa_values_all_thresholds(embedding, neg_test_dataset,
+                                                                                       size_neg_test, face_emb_dict,
+                                                                                       beta_array)
         # Save NFA values to model NFA values array
-        model_nfa_values.append(nfa_values)
-        
+        model_nfa_values_ta_tr.append(nfa_values_ta_tr)
+        model_nfa_values_raap_raan.append(nfa_values_raap_raan)
+        model_nfa_values_tree.append(nfa_values_tree)
+
         ##############
         # Get positive accuracy, negative accuracy and overall accuracy with each threshold
         # Save them to accuracies array for all folds
-        accuracies[test_fold] = get_test_accuracies(cmc_values, nfa_values)
+        # Using TA-TR method
+        accuracies_ta_tr[test_fold] = get_test_accuracies(cmc_values_ta_tr, nfa_values_ta_tr)
+
+        # Using RAAP-RAAN method
+        accuracies_raap_raan[test_fold] = get_test_accuracies(cmc_values_raap_raan, nfa_values_raap_raan)
+
+        # Using Tree method
+        accuracies_tree[test_fold] = get_test_accuracies(cmc_values_tree, nfa_values_tree)
         
         ##############
         # Get first top-k acc = 1.0 with each threshold.
-        model_top_k_acc[test_fold] = first_max_topk(cmc_values)
-        
+        model_top_k_acc[test_fold] = first_max_topk_all_thresholds(cmc_values_ta_tr,
+                                                                   cmc_values_raap_raan,
+                                                                   cmc_values_tree,
+                                                                   face_db_size+1)
 
     ##############
     # Format results data in order to save it to disk
     # Model parameters
-    parameters_used = "FaceNet (normal ConvNet) WITHOUT REG." + \
+    parameters_used = "SNNTLBASIC." + \
+                      "\nAlpha = " + str(alpha_margin) + \
+                      "\nL2 penalizer = " + str(l2_penalizer) + \
                       "\nTrain epochs = " + str(train_epochs) + \
                       "\nLearn rate = " + str(learn_rate) + \
-                      "\nBatch size = " +  str(train_batch_size) + \
-                      "\nRetrainable layers: " + ' '.join(retrainables_layers)
+                      "\nBatch size = " +  str(train_batch_size)
 
-    # CMC values and NFA values
-    model_cmc_values = np.concatenate(model_cmc_values, axis=0)
-    model_nfa_values = np.concatenate(model_nfa_values, axis=0)
+    # TA-TR CMC values and NFA values
+    model_cmc_values_ta_tr = np.concatenate(model_cmc_values_ta_tr, axis=0)
+    model_nfa_values_ta_tr = np.concatenate(model_nfa_values_ta_tr, axis=0)
+
+    # RAAP-RAAN CMC values and NFA values
+    model_cmc_values_raap_raan = np.concatenate(model_cmc_values_raap_raan, axis=0)
+    model_nfa_values_raap_raan = np.concatenate(model_nfa_values_raap_raan, axis=0)
+
+    # Tree CMC values and NFA values
+    model_cmc_values_tree = np.concatenate(model_cmc_values_tree, axis=0)
+    model_nfa_values_tree = np.concatenate(model_nfa_values_tree, axis=0)
 
     # Accuracies
-    accuracies = accuracies.mean(axis=0)
+    acc_ta_tr_mean     = accuracies_ta_tr.mean(axis=0)
+    acc_raap_raan_mean = accuracies_raap_raan.mean(axis=0)
+    acc_tree_mean      = accuracies_tree.mean(axis=0)
     
-    model_top_k_acc = model_top_k_acc.mean()
+    model_top_k_acc = model_top_k_acc.mean(axis=0)
 
 
     ##############
     # Add model results to object
-    exp_results.append_model(parameters_used, beta_threshold, 
-                             model_cmc_values, model_nfa_values,
-                             accuracies, model_top_k_acc, 
-                             val_ranking_hist)
+    exp_results.append_model(parameters_used, beta_array,
+                             model_cmc_values_ta_tr, model_nfa_values_ta_tr,
+                             model_cmc_values_raap_raan, model_nfa_values_raap_raan,
+                             model_cmc_values_tree, model_nfa_values_tree,
+                             acc_ta_tr_mean, acc_raap_raan_mean, acc_tree_mean,
+                             model_top_k_acc,
+                             model_val_ranking_hist)
 
     ##############
     # Save results object to disk
-    expResults.save_results_to_disk(exp_results, results_cv_traditional_nn_file_path)
+    expResults.save_results_to_disk(exp_results, results_cv_without_on_file_path)

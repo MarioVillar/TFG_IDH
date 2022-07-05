@@ -31,7 +31,7 @@ from tensorflow.keras.models import load_model
 
 
 
-from global_variables import *
+from macros import *
 from distance_functions import *
 from threshold_detection_functions import *
 from utilities import *
@@ -39,10 +39,10 @@ from test_functions import *
 
 
 
-class ModelCustomVal(Model):
+class SNNSIGMOID(Model):
 
     def __init__(self, network, face_dataset):
-        super(ModelCustomVal, self).__init__()
+        super(SNNSIGMOID, self).__init__()
         self.network = network
         self.face_dataset = face_dataset        # Face database for validation
         
@@ -56,7 +56,7 @@ class ModelCustomVal(Model):
         return self.network(inputs)
     
     def compile(self, optimizer, loss, sqrt=False):
-        super(ModelCustomVal, self).compile()
+        super(SNNSIGMOID, self).compile()
         self.nn_optimizer = optimizer
         self.loss_fn = loss
         self.sqrt = sqrt

@@ -46,12 +46,12 @@ from tensorflow.keras.models import load_model
 
 
 
-from global_variables import *
+from macros import *
 from distance_functions import *
 from threshold_detection_functions import *
 from utilities import *
 from test_functions import *
-from siamese_keras_model import *
+from snn_tl_offline import SNNTLOffline
 from image_preprocessing_functions import *
 
 
@@ -781,29 +781,15 @@ callbacks = [
 
 
 # Create parameter space with the next format:
-#       [alpha, l1_pen, l2_pen, alpha_pen, epsi, trp_sel, l_r]
+#       [alpha, l2_pen, trp_sel, l_r]
 
 parameter_space = [ 
-                    [  5, 0, 0.01,   0,   0, False, 1e-4], # Sin online, sin seleccion, sin Cond TL (best top-k)
-                    [0.2, 0, 0.01,   0,   0, False, 1e-4], # Sin online, sin seleccion, sin Cond TL (best top-k)
-                    [ 20, 0, 0.01,   0,   0, False, 1e-5], # Sin online, sin seleccion, sin Cond TL (best top-k)
-                    [  5, 0,  0.2,   0,   0, False, 1e-4], # Sin online, sin seleccion, sin Cond TL (best acc)
-                    [ 10, 0,  0.2,   0,   0, False, 1e-4], # Sin online, sin seleccion, sin Cond TL (best acc)
-                    [0.2, 0,  0.2,   0,   0, False, 1e-4], # Sin online, sin seleccion, sin Cond TL (best acc)
-                    
-                    [  5, 0,  0.2, 0.2, 0.9, False, 1e-4], # Sin online, sin seleccion, con Cond TL (best top-k)
-                    [  5, 0,  0.2, 0.5, 0.5, False, 1e-4], # Sin online, sin seleccion, con Cond TL (best top-k)
-                    [  5, 0,  0.2, 0.2, 0.1, False, 1e-4], # Sin online, sin seleccion, con Cond TL (best top-k)
-                    [0.2, 0, 0.01, 0.1, 0.1, False, 1e-6], # Sin online, sin seleccion, con Cond TL (best acc)
-                    [ 10, 0,  0.2, 0.5, 0.1, False, 1e-6], # Sin online, sin seleccion, con Cond TL (best acc)
-                    [  5, 0,  0.2, 0.1, 0.1, False, 1e-6], # Sin online, sin seleccion, con Cond TL (best acc)
-                    
-                    [ 20, 0, 0.01,   0,   0,  True, 1e-4], # Sin online, con seleccion, sin Cond TL (best top-k)
-                    [  5, 0,  0.1,   0,   0,  True, 1e-6], # Sin online, con seleccion, sin Cond TL (best top-k)
-                    [ 20, 0,  0.1,   0,   0,  True, 1e-4], # Sin online, con seleccion, sin Cond TL (best top-k)
-                    [ 10, 0,  0.2,   0,   0,  True, 1e-4], # Sin online, con seleccion, sin Cond TL (best acc)
-                    [  5, 0,  0.2,   0,   0,  True, 1e-4], # Sin online, con seleccion, sin Cond TL (best acc)
-                    [ 20, 0,  0.4,   0,   0,  True, 1e-4]  # Sin online, con seleccion, sin Cond TL (best acc)
+                    [ 20, 0.01, True, 1e-4], # From best top-k
+                    [  5,  0.1, True, 1e-6], # From best top-k
+                    [ 20,  0.1, True, 1e-4], # From best top-k
+                    [ 10,  0.2, True, 1e-4], # From best acc
+                    [  5,  0.2, True, 1e-4], # From best acc
+                    [ 20,  0.4, True, 1e-4]  # From best acc
                   ]
 
 
@@ -815,8 +801,10 @@ exp_results = expResults.get_results_from_disk(results_cv_without_on_file_path,
                                                num_neg_ind_test,
                                                face_db_size)
 
-for alpha_margin, l1_penalizer, l2_penalizer, alpha_penalty, \
-    epsilon, triplet_selection, learn_rate in parameter_space:
+
+
+
+for alpha_margin, l2_penalizer, triplet_selection, learn_rate in parameter_space:
                       
     print(flush=True)
     ##############
@@ -876,12 +864,11 @@ for alpha_margin, l1_penalizer, l2_penalizer, alpha_penalty, \
 
         ##############
         # CREATE MODEL
-        siamese_model = SiameseModel(siamese_network,             # Underneath network model
+        siamese_model = SNNTLOffline(siamese_network,             # Underneath network model
                                  embedding,                   # Underneath embedding generator model
                                  face_dataset,                # Face database for validation
                                  alpha_margin,                # Triplet Loss Margin
-                                 l1_penalizer, l2_penalizer,  # L1 and L2 penalization stregth
-                                 alpha_penalty, epsilon,      # Conditinal Triplet Loss parameters
+                                 l2_penalizer,                # L2 penalization stregth
                                  triplet_selection            # If True, Select hard and semi hard triplets
                                  ) 
 
@@ -899,8 +886,7 @@ for alpha_margin, l1_penalizer, l2_penalizer, alpha_penalty, \
         ##############
         # TRAIN MODEL
 
-        print("\nModelo", alpha_margin, l1_penalizer, l2_penalizer, alpha_penalty,
-              epsilon, triplet_selection, learn_rate, flush=True)
+        print("\nSNNTLSEL", alpha_margin, l2_penalizer, triplet_selection, learn_rate, flush=True)
         print("Comenzando entrenamiento del fold ", test_fold, "...", sep='', flush=True)
         
         history = siamese_model.fit(train_dataset, epochs=train_epochs,
@@ -976,12 +962,9 @@ for alpha_margin, l1_penalizer, l2_penalizer, alpha_penalty, \
     ##############
     # Format results data in order to save it to disk
     # Model parameters
-    parameters_used = "Triplet Loss sin online generation." + \
+    parameters_used = "SNNTLSEL." + \
                       "\nAlpha = " + str(alpha_margin) + \
-                      "\nL1 penalizer = " + str(l1_penalizer) + \
                       "\nL2 penalizer = " + str(l2_penalizer) + \
-                      "\nAlpha penality = " + str(alpha_penalty) + "(Conditional Triplet Loss)" + \
-                      "\nEpsilon = " + str(epsilon) + "(Conditional Triplet Loss)" + \
                       "\nSelect hard and semi-hard = " + str(triplet_selection) + \
                       "\nTrain epochs = " + str(train_epochs) + \
                       "\nLearn rate = " + str(learn_rate) + \

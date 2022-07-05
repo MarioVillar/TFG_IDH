@@ -7,37 +7,28 @@ Created on Mon Jun 13 12:57:35 2022
 
 
 
-import matplotlib.pyplot as plt
-import matplotlib.patches as pat
-from matplotlib.lines import Line2D
 import numpy as np
 import os
 import random
 import pandas as pd
 import math
-import pickle
-from operator import itemgetter
 import datetime
-
-from sklearn.tree import DecisionTreeClassifier
-from sklearn.tree import export_text
 
 
 import tensorflow as tf
 from tensorflow.keras import layers
 from tensorflow.keras import optimizers
-from tensorflow.keras import metrics
 from tensorflow.keras import Model
 from tensorflow.keras.models import load_model
 
 
 
-from global_variables import *
+from macros import *
 from distance_functions import *
 from threshold_detection_functions import *
 from utilities import *
 from test_functions import *
-from siamese_keras_model_online_gen import *
+from snn_tl_offline import SNNTLOffline
 from image_preprocessing_functions import *
 
 
@@ -131,6 +122,7 @@ going to be separated as the Positive Test set and the Negaitve Test set.
 The reamining `75%` of the individuals (positive and negative together) 
 are going to constitute the training set.
 """
+
 # 25% of positive individuals are chosen randomly for test
 pos_test_individuals  = pos_individuals[random.sample(range(0, pos_individuals.size-1), # Both bounds are included in random sample
                                                       math.ceil(pos_individuals.size*test_split))]
@@ -161,6 +153,7 @@ validation set. The reamining `90%` of the positive train individuals
 (together with the negative train individuals) are going to constitute 
 the training set.
 """
+
 # 10% of positive train individuals are chosen randomly for validation
 pos_val_individuals  = pos_train_individuals[random.sample(range(0, pos_train_individuals.size-1), # Both bounds are included in random sample
                                                            math.ceil(pos_train_individuals.size*val_split))]
@@ -203,11 +196,6 @@ anchor_path_list = [ face_im_dict[df_info.loc[df_info['Individuo'] == skull_ind]
                         for skull_ind in pos_train_individuals                              # For each positive train individual 
                             for skull_im in os.listdir(skull_im_path + "/" + skull_ind)]    # For each skull image of that individual
 
-anchor_label_list = [skull_ind
-                        for skull_ind in pos_train_individuals                              # For each positive train individual 
-                            for skull_im in os.listdir(skull_im_path + "/" + skull_ind)]    # For each skull image of that individual]
-
-
 # Get all skull image paths of positive train individuals
 
 # Get the path of a skull image from skull_ind:
@@ -216,11 +204,6 @@ anchor_label_list = [skull_ind
 pos_path_list = [ skull_im_path + "/" + skull_ind + "/" + skull_im                   # Skull image path
                     for skull_ind in pos_train_individuals                           # For each positive train individual
                         for skull_im in os.listdir(skull_im_path + "/" + skull_ind)] # For each skull image of that individual
-
-pos_label_list = [ skull_ind
-                    for skull_ind in pos_train_individuals                           # For each positive train individual
-                        for skull_im in os.listdir(skull_im_path + "/" + skull_ind)] # For each skull image of that individual]
-
 
 # Get 124 skull image paths of negative individuals in order to balance the dataset
 
@@ -233,10 +216,6 @@ neg_path_list = [ skull_im_path + "/" + skull_ind + "/" + skull_im              
                         for skull_im in os.listdir(skull_im_path + "/" + skull_ind) # For each skull image of that individual
                             if int(skull_im.split("_")[3].split(".")[0]) < num_neg_images ]
 
-neg_label_list = [ skull_ind
-                    for skull_ind in neg_train_individuals                          # For each individual in the skull dataset
-                        for skull_im in os.listdir(skull_im_path + "/" + skull_ind) # For each skull image of that individual
-                            if int(skull_im.split("_")[3].split(".")[0]) < num_neg_images ]
 
 
 """
@@ -246,53 +225,36 @@ element `i` of `positive_path_list`, so both of them should be
 shuffled in the same exact order.
 """
 
-# Zip together anchor and positive images (with labels)
-anchor_positive_zip = list( zip(anchor_path_list, anchor_label_list, pos_path_list, pos_label_list) )
+# Zip together anchor and positive images
+anchor_positive_zip = list( zip(anchor_path_list, pos_path_list) )
 
 # Randomly shuffle the zip altogether
 random.shuffle(anchor_positive_zip)
 
 # Unzip
-anchor_path_list, anchor_label_list, pos_path_list, pos_label_list = zip(*anchor_positive_zip)
+anchor_path_list, pos_path_list = zip(*anchor_positive_zip)
 
 # Convert to list as the zip output comes as tuples
-anchor_path_list, anchor_label_list = list(anchor_path_list), list(anchor_label_list)
-pos_path_list,    pos_label_list    = list(pos_path_list),    list(pos_label_list)
+anchor_path_list, pos_path_list = list(anchor_path_list), list(pos_path_list)
 
-
-# Zip together negative images and their labels
-negative_zip = list( zip(neg_path_list, neg_label_list) )
-
-# Randomly shuffle the zip altogether
-random.shuffle(negative_zip)
-
-# Unzip
-neg_path_list, neg_label_list = zip(*negative_zip)
-
-# Convert to list as the zip output comes as tuples
-neg_path_list, neg_label_list = list(neg_path_list), list(neg_label_list)
-
-
+# Randomly shuffle negative images
+random.shuffle(neg_path_list)
 
 
 anchor_dataset   = tf.data.Dataset.from_tensor_slices(anchor_path_list) # Anchors path dataset
 positive_dataset = tf.data.Dataset.from_tensor_slices(pos_path_list)    # Positives path dataset
 negative_dataset = tf.data.Dataset.from_tensor_slices(neg_path_list)    # Negative path dataset
 
-a_labels_dataset = tf.data.Dataset.from_tensor_slices(anchor_label_list) # Anchors labels dataset
-p_labels_dataset = tf.data.Dataset.from_tensor_slices(pos_label_list)    # Positives labels dataset
-n_labels_dataset = tf.data.Dataset.from_tensor_slices(neg_label_list)    # Negative labels dataset
 
-
-triplets_dataset = tf.data.Dataset.zip(((anchor_dataset, positive_dataset, negative_dataset),
-                                        (a_labels_dataset, p_labels_dataset, n_labels_dataset))) # Triplets path dataset
+triplets_dataset = tf.data.Dataset.zip((anchor_dataset, positive_dataset, negative_dataset)) # Triplets path dataset
 triplets_dataset = triplets_dataset.shuffle(buffer_size=1024, seed=SEED)
 
 
-train_dataset = triplets_dataset.map(get_triplet_with_label)
+train_dataset = triplets_dataset.map(get_triplet)
 n_triplets = int(train_dataset.__len__().numpy())
 
-train_dataset = train_dataset.batch(train_batch_size_online)
+
+train_dataset = train_dataset.batch(train_batch_size)
 train_dataset = train_dataset.prefetch(8) # Setting prefetch buffer size to 8
 
 
@@ -317,8 +279,13 @@ name of the corresponding face image.
 val_pos_skull_path_list  = [] # Path of each skull test image
 val_pos_skull_label_list = [] # Name of each face test image
 
-for skull_ind in pos_val_individuals: # For each individual in the validation skull dataset
+
+ # For each individual in the validation skull dataset
+for skull_ind in pos_val_individuals:
+    
+    # For each skull image of the individual
     for image_index in range(0, 100):
+        
         # Append skull image path to list
         val_pos_skull_path_list.append(skull_im_path + "/" + skull_ind + "/" + os.listdir(skull_im_path + "/" + skull_ind)[image_index])
 
@@ -438,26 +405,80 @@ neg_test_dataset = neg_test_dataset.prefetch(8) # Setting prefetch buffer size t
 Face dataset is composed of pairs of face images and their names.
 """
 
-# The dictionary face_im_dict contains the name of every face image, associated to its path
-face_im_paths  = list(face_im_dict.values())
-face_im_labels = list(face_im_dict.keys())
+################################
+#  UTKFACE DATASET IMAGE PATHS
+all_utk_im_names = os.listdir(UTKFace_path)
 
-face_db_size = len(face_im_dict)
+all_utk_im_paths = [ UTKFace_path + "/" + face_im for face_im in all_utk_im_names ]
 
-face_path_dataset   = tf.data.Dataset.from_tensor_slices(face_im_paths)   # Face images path dataset
-face_label_dataset  = tf.data.Dataset.from_tensor_slices(face_im_labels)  # Face images names dataset
+random.shuffle(all_utk_im_paths)
+
+################################
+# CREATE FACE DATASET
+
+face_db_size = 100
+
+
+pos_face_path_list  = [] # Path of each BD Test face image
+pos_face_label_list = [] # Label of each BD Test face image
+
+# Append faces from test individuals
+for skull_ind in pos_test_individuals: 
+    pos_face_path_list.append(face_im_dict[df_info.loc[df_info['Individuo'] == skull_ind].iloc[0,1]])
+
+    # Append corresponding face image name to list
+    pos_face_label_list.append(df_info.loc[df_info['Individuo'] == skull_ind].iloc[0,1])
+    
+# Append faces from validation individuals
+for skull_ind in pos_val_individuals: 
+    pos_face_path_list.append(face_im_dict[df_info.loc[df_info['Individuo'] == skull_ind].iloc[0,1]])
+
+    # Append corresponding face image name to list
+    pos_face_label_list.append(df_info.loc[df_info['Individuo'] == skull_ind].iloc[0,1])
+
+# Take UTK faces to complete face dataset
+im_utk_paths = all_utk_im_paths[- ( face_db_size - len(pos_face_path_list) ) :]
+
+# Delete selected images, so they are not repeated in more than one fold
+del all_utk_im_paths[- ( face_db_size - len(pos_face_path_list) ) :]
+
+# Labels of UTKFace images. -1 indicates non related no any skull
+im_utk_labels = [-1 for i in range(0, len(im_utk_paths))]
+
+face_im_paths = pos_face_path_list + im_utk_paths
+face_im_labels = pos_face_label_list + im_utk_labels
+
+face_path_dataset  = tf.data.Dataset.from_tensor_slices(face_im_paths)   # Face images path dataset
+face_label_dataset = tf.data.Dataset.from_tensor_slices(face_im_labels)  # Face images names dataset
 
 face_pairs_dataset = tf.data.Dataset.zip((face_path_dataset, face_label_dataset)) # Face pairs path dataset
-face_pairs_dataset = face_pairs_dataset.shuffle(buffer_size=1024, seed=SEED)
-
 
 face_dataset = face_pairs_dataset.map(get_pair)
 
-
-n_pairs = int(face_dataset.__len__().numpy())
-
-face_dataset = face_dataset.batch(n_pairs)
+face_dataset = face_dataset.batch(face_db_size)
 face_dataset = face_dataset.prefetch(8) # Setting prefetch buffer size to 8
+
+
+# # The dictionary face_im_dict contains the name of every face image, associated to its path
+# face_im_paths  = list(face_im_dict.values())
+# face_im_labels = list(face_im_dict.keys())
+
+# face_db_size = len(face_im_dict)
+
+# face_path_dataset   = tf.data.Dataset.from_tensor_slices(face_im_paths)   # Face images path dataset
+# face_label_dataset  = tf.data.Dataset.from_tensor_slices(face_im_labels)  # Face images names dataset
+
+# face_pairs_dataset = tf.data.Dataset.zip((face_path_dataset, face_label_dataset)) # Face pairs path dataset
+# face_pairs_dataset = face_pairs_dataset.shuffle(buffer_size=1024, seed=SEED)
+
+
+# face_dataset = face_pairs_dataset.map(get_pair)
+
+
+# n_pairs = int(face_dataset.__len__().numpy())
+
+# face_dataset = face_dataset.batch(n_pairs)
+# face_dataset = face_dataset.prefetch(8) # Setting prefetch buffer size to 8
 
 
 """
@@ -467,7 +488,12 @@ RESIZE IMAGES TO FIT FACENET INPUT
 Images in data set are `224x224` shaped, and FaceNet accepts `160x160` shaped images.
 """
 
-train_dataset = train_dataset.map(resize_im_train_online)
+train_dataset = train_dataset.map(
+    lambda anchor, positive, negative:
+        (resize_im(anchor, faceNet_shape),
+         resize_im(positive, faceNet_shape),
+         resize_im(negative, faceNet_shape))
+)
 
 
 pos_val_dataset = pos_val_dataset.map(
@@ -505,7 +531,10 @@ training dataset.
 https://arxiv.org/abs/1904.11685
 """
     
-train_dataset = train_dataset.map(data_aug_faces_online)
+train_dataset = train_dataset.map(
+    lambda anchor, positive, negative:
+        (data_augmentation_faces(anchor), positive, negative)
+)   
 
 
     
@@ -564,16 +593,22 @@ train_epochs       = 1000             # Training epochs (not relevant, using Ear
 
 
 # Create hyperparameter space
-alpha_margins      = [0.2, 1, 5, 10, 20] # Distance margin in Triplet Loss
+alpha_margins      = [0.2, 1, 5, 10, 20]   # Distance margin in Triplet Loss
 l2_penalizers      = [0.01, 0.1, 0.2, 0.4] # L2 penalization strength parameter in Triplet Loss
-batch_all_gen      = [True, False]
-learn_rates        = [1e-4, 1e-5, 1e-6] # Learning rate of the Optimizer in training
+alpha_penaltys     = [0.1, 0.2, 0.5, 1]    # Distance margin penalty in Conditional Triplet Loss
+epsilons           = [0.1, 0.5, 0.9]       # epsilon for Conditional Triplet Loss
+learn_rates        = [1e-4, 1e-5, 1e-6]    # Learning rate of the Optimizer in training
 
 
-parameter_space = [[alpha, l2_pen, batch_all, l_r]
-                   for alpha in alpha_margins
+# l1_penalizers      = [0]              # L1 penalization strength parameter in Triplet Loss
+
+
+
+parameter_space = [[alpha, l2_pen, alpha_pen, epsi, l_r]
+                       for alpha in alpha_margins
                            for l2_pen in l2_penalizers
-                                       for batch_all in batch_all_gen
+                               for alpha_pen in alpha_penaltys
+                                   for epsi in epsilons
                                            for l_r in learn_rates
                   ]
 
@@ -581,22 +616,26 @@ parameter_space = [[alpha, l2_pen, batch_all, l_r]
 
 ##############
 # Obtain object to save the results from file
-exp_results = expResults.get_results_from_disk(results_online_file_path,
+exp_results = expResults.get_results_from_disk(results_snntlc_hold_out_file_path,
                                                size_pos_test,
                                                size_neg_test,
                                                face_db_size)
     
 
-for alpha_margin, l2_penalizer, batch_all, learn_rate in parameter_space:
+for alpha_margin, l2_penalizer, alpha_penalty, \
+    epsilon, learn_rate in parameter_space:
 
     # Model parameters
-    parameters_used = "Triplet Loss con online generation." + \
+    parameters_used = "SNNTLC." + \
                       "\nAlpha = " + str(alpha_margin) + \
                       "\nL2 penalizer = " + str(l2_penalizer) + \
-                      "\nBatch all = " + str(batch_all) + \
+                      "\nAlpha penality = " + str(alpha_penalty) + \
+                      "\nEpsilon = " + str(epsilon) + \
                       "\nTrain epochs = " + str(train_epochs) + \
                       "\nLearn rate = " + str(learn_rate) + \
-                      "\nBatch size = " +  str(train_batch_size_online)
+                      "\nBatch size = " +  str(train_batch_size)
+                  
+
 
 
     """
@@ -604,20 +643,16 @@ for alpha_margin, l2_penalizer, batch_all, learn_rate in parameter_space:
     CREATE MODEL AND TRAIN IT
     """
     
-    # Reset weights to initial ones
-    embedding.set_weights(emb_initial_weights)
-    siamese_network.set_weights(snn_initial_weights)
-    
-    siamese_model = SiameseModel(siamese_network,             # Underneath network model
+    siamese_model = SNNTLOffline(siamese_network,             # Underneath network model
                                  embedding,                   # Underneath embedding generator model
                                  face_dataset,                # Face database for validation
                                  alpha_margin,                # Triplet Loss Margin
                                  l2_penalizer,                # L2 penalization stregth
-                                 batch_all                    # Whether to bacth all triplets or not (only hard ones)
+                                 alpha_penalty, epsilon       # Conditinal Triplet Loss parameters
                                  ) 
     
-    # siamese_model.compile(optimizer=optimizers.Adam(learn_rate))
-    siamese_model.compile(optimizer=optimizers.Adagrad(learn_rate))
+    siamese_model.compile(optimizer=optimizers.Adam(learn_rate))
+    # siamese_model.compile(optimizer=optimizers.Adagrad(learn_rate))
     # siamese_model.compile(optimizer=optimizers.SGD(learn_rate))
     
     
@@ -635,7 +670,13 @@ for alpha_margin, l2_penalizer, batch_all, learn_rate in parameter_space:
         )
     ]
     
-    print("\nModelo", alpha_margin, l2_penalizer, batch_all, learn_rate, flush=True)
+    
+    # Reset weights to initial ones
+    embedding.set_weights(emb_initial_weights)
+    siamese_network.set_weights(snn_initial_weights)
+    
+    print("\nSNNTLC", alpha_margin, l2_penalizer, alpha_penalty, \
+          epsilon, learn_rate, flush=True)
     print("Comenzando entrenamiento...", flush=True)
     history = siamese_model.fit(train_dataset, epochs=train_epochs,
                                 validation_data=pos_val_dataset,
@@ -655,20 +696,20 @@ for alpha_margin, l2_penalizer, batch_all, learn_rate in parameter_space:
     """
     ##############
     # Get A-P and A-N distances in training triplets
-    ap_distances, an_distances = get_ap_an_distances_online(embedding, train_dataset)
+    ap_distances, an_distances = get_ap_an_distances(embedding, train_dataset)
     
     ##############
     # Obtain decision thresholds
     beta_array = get_decision_thresholds(ap_distances, an_distances)
     
-    # Save plot of distances and thresholds
-    now = datetime.datetime.now()
-    time_stamp = str(now.hour+2) + "%" + str(now.minute).zfill(2) + "_" + str(now.day) + "%" + str(now.month) + "%" + str(now.year)
+    # # Save plot of distances and thresholds
+    # now = datetime.datetime.now()
+    # time_stamp = str(now.hour+2) + "%" + str(now.minute).zfill(2) + "_" + str(now.day) + "%" + str(now.month) + "%" + str(now.year)
     
-    plot_dist_thresholds_hist(ap_distances, an_distances,
-                              beta_array[0], beta_array[1], beta_array[2],
-                              n_bars=50, path_savefig=path_fig_hist_thresholds+'select_'+time_stamp,
-                              title=parameters_used)
+    # plot_dist_thresholds_hist(ap_distances, an_distances,
+    #                           beta_array[0], beta_array[1], beta_array[2],
+    #                           n_bars=50, path_savefig=path_fig_hist_thresholds+'select_'+time_stamp,
+    #                           title=parameters_used)
     
     
     
@@ -737,4 +778,4 @@ for alpha_margin, l2_penalizer, batch_all, learn_rate in parameter_space:
     
     ##############
     # Save results object to disk
-    expResults.save_results_to_disk(exp_results, results_online_file_path)
+    expResults.save_results_to_disk(exp_results, results_snntlc_hold_out_file_path)
