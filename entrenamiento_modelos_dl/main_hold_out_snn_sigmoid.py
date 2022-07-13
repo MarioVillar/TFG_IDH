@@ -172,6 +172,18 @@ pos_train_individuals = pos_train_individuals[~np.in1d(pos_train_individuals, po
 
 """
 ###############################################################################
+#  UTKFACE DATASET IMAGE PATHS
+"""
+
+all_utk_im_names = os.listdir(UTKFace_path)
+
+all_utk_im_paths = [ UTKFace_path + "/" + face_im for face_im in all_utk_im_names ]
+
+random.shuffle(all_utk_im_paths)
+
+
+"""
+###############################################################################
 TRAIN DATASET
 
 DEFINING TRAINING TRIPLETS
@@ -228,10 +240,14 @@ neg_skulls_path_list = [ skull_im_path + "/" + skull_ind + "/" + skull_im       
 # Get one face image from UTKFace dataset for each negative skull image 
 num_im_utkface = len(neg_skulls_path_list)
 
-utk_im_paths = random.sample(os.listdir(UTKFace_path), num_im_utkface)
+# utk_im_paths = random.sample(os.listdir(UTKFace_path), num_im_utkface)
 
-neg_faces_path_list = [ UTKFace_path + "/" + face_im for face_im in utk_im_paths ]
+# neg_faces_path_list = [ UTKFace_path + "/" + face_im for face_im in utk_im_paths ]
 
+neg_faces_path_list = all_utk_im_paths[-num_im_utkface:]
+
+# Delete selected images, so they are not repeated in more than one fold
+del all_utk_im_paths[-num_im_utkface:]
 
 
 
@@ -418,27 +434,69 @@ neg_test_dataset = neg_test_dataset.prefetch(8) # Setting prefetch buffer size t
 Face dataset is composed of pairs of face images and their names.
 """
 
-# The dictionary face_im_dict contains the name of every face image, associated to its path
-face_im_paths  = list(face_im_dict.values())
-face_im_labels = list(face_im_dict.keys())
+face_db_size = 100
 
-face_db_size = len(face_im_dict)
 
-face_path_dataset   = tf.data.Dataset.from_tensor_slices(face_im_paths)   # Face images path dataset
-face_label_dataset  = tf.data.Dataset.from_tensor_slices(face_im_labels)  # Face images names dataset
+pos_face_path_list  = [] # Path of each BD Test face image
+pos_face_label_list = [] # Label of each BD Test face image
+
+# Append faces from test individuals
+for skull_ind in pos_test_individuals: 
+    pos_face_path_list.append(face_im_dict[df_info.loc[df_info['Individuo'] == skull_ind].iloc[0,1]])
+
+    # Append corresponding face image name to list
+    pos_face_label_list.append(df_info.loc[df_info['Individuo'] == skull_ind].iloc[0,1])
+    
+# Append faces from validation individuals
+for skull_ind in pos_val_individuals: 
+    pos_face_path_list.append(face_im_dict[df_info.loc[df_info['Individuo'] == skull_ind].iloc[0,1]])
+
+    # Append corresponding face image name to list
+    pos_face_label_list.append(df_info.loc[df_info['Individuo'] == skull_ind].iloc[0,1])
+
+# Take UTK faces to complete face dataset
+im_utk_paths = all_utk_im_paths[- ( face_db_size - len(pos_face_path_list) ) :]
+
+# Delete selected images, so they are not repeated in more than one fold
+del all_utk_im_paths[- ( face_db_size - len(pos_face_path_list) ) :]
+
+# Labels of UTKFace images. -1 indicates non related no any skull
+im_utk_labels = [-1 for i in range(0, len(im_utk_paths))]
+
+face_im_paths = pos_face_path_list + im_utk_paths
+face_im_labels = pos_face_label_list + im_utk_labels
+
+face_path_dataset  = tf.data.Dataset.from_tensor_slices(face_im_paths)   # Face images path dataset
+face_label_dataset = tf.data.Dataset.from_tensor_slices(face_im_labels)  # Face images names dataset
 
 face_pairs_dataset = tf.data.Dataset.zip((face_path_dataset, face_label_dataset)) # Face pairs path dataset
 
-
 face_dataset = face_pairs_dataset.map(get_pair)
 
-n_pairs = int(face_dataset.__len__().numpy())
-
-face_dataset = face_dataset.shuffle(buffer_size=1024, seed=SEED)
-
-
-face_dataset = face_dataset.batch(n_pairs)
+face_dataset = face_dataset.batch(face_db_size)
 face_dataset = face_dataset.prefetch(8) # Setting prefetch buffer size to 8
+
+# # The dictionary face_im_dict contains the name of every face image, associated to its path
+# face_im_paths  = list(face_im_dict.values())
+# face_im_labels = list(face_im_dict.keys())
+
+# face_db_size = len(face_im_dict)
+
+# face_path_dataset   = tf.data.Dataset.from_tensor_slices(face_im_paths)   # Face images path dataset
+# face_label_dataset  = tf.data.Dataset.from_tensor_slices(face_im_labels)  # Face images names dataset
+
+# face_pairs_dataset = tf.data.Dataset.zip((face_path_dataset, face_label_dataset)) # Face pairs path dataset
+
+
+# face_dataset = face_pairs_dataset.map(get_pair)
+
+# n_pairs = int(face_dataset.__len__().numpy())
+
+# face_dataset = face_dataset.shuffle(buffer_size=1024, seed=SEED)
+
+
+# face_dataset = face_dataset.batch(n_pairs)
+# face_dataset = face_dataset.prefetch(8) # Setting prefetch buffer size to 8
 
 
 """
