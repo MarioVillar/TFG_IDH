@@ -593,7 +593,7 @@ def show_cmc_curve(cmc_values, sample_size, path_savefig=None, title=None):
     x_values = np.array([int(sample_size*i/10) for i in range(1,11)]) # Every 10% of Data base size
     
     # Append first top-k acc = 1.0
-    x_values = np.sort(np.append(max(cmc_values), x_values))
+    # x_values = np.sort(np.append(max(cmc_values), x_values))
     
     # Append top ranking if not already included
     if 1 not in x_values:
@@ -640,7 +640,11 @@ PLOT NFAS CURVE
 def show_nfa_curve(nfa_values, sample_size, path_savefig=None, title=None):
     # X-axis are the NFAs
     x_values = np.array([int(sample_size*i/10) for i in range(0,11)]) # Every 10% of sample size
-
+    
+    # Append first %nfa = 1.0
+    if max(nfa_values) not in x_values:
+        x_values = np.sort(np.append(max(nfa_values), x_values))
+    
     # Y-Axis are the percentages of individuals with lower than specfific NFA
     y_values = np.ones(len(x_values), dtype='float32')
 
@@ -651,7 +655,8 @@ def show_nfa_curve(nfa_values, sample_size, path_savefig=None, title=None):
         # Count number of individuals with nfa<=k
         y_values[i] = np.count_nonzero(nfa_values <= k) / len(nfa_values) * 100
 
-    x_labels = np.array([str(int(sample_size*i/10)) + "\n(" + str(i*10)+"%)" for i in range(0,11)])
+    x_labels = np.array([str(int(x_values[i]/sample_size*100)) + "\n(" + 
+                         str(x_values[i]/sample_size*100)+"%)" for i in range(0,len(x_values))])
     
     y_ticks  = np.arange(0,110,10)
 
